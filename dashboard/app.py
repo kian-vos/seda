@@ -210,7 +210,7 @@ def main():
     # Navigation
     page = st.sidebar.radio(
         "Navigate",
-        ["Overview", "Accounts", "Coordination", "Network", "Collect More", "Export"],
+        ["Overview", "Accounts", "Coordination", "Network", "Export"],
     )
 
     st.sidebar.markdown("---")
@@ -228,8 +228,6 @@ def main():
         show_coordination()
     elif page == "Network":
         show_network()
-    elif page == "Collect More":
-        show_collection_guide()
     elif page == "Export":
         show_export()
 
@@ -307,6 +305,7 @@ def show_home():
 
     with col2:
         st.markdown("### Stance Classification")
+        st.caption("Click a bar to filter accounts by stance")
         if accounts:
             stance_counts = {}
             for acc in accounts:
@@ -338,48 +337,59 @@ def show_home():
                 xaxis=dict(gridcolor='#333'),
                 yaxis=dict(gridcolor='#333'),
             )
-            st.plotly_chart(fig, use_container_width=True)
+            selected = st.plotly_chart(fig, use_container_width=True, on_select="rerun", key="stance_chart")
+
+            # Handle chart click to navigate to accounts
+            if selected and selected.selection and selected.selection.points:
+                clicked_stance = selected.selection.points[0].get("x")
+                if clicked_stance:
+                    st.session_state["filter_stance"] = clicked_stance
+                    st.switch_page_workaround = clicked_stance
         else:
             st.info("No accounts in database yet.")
 
-    # Pro-regime accounts list
+    # Quick links to filtered views
     st.markdown("---")
-    st.markdown("### Identified Pro-Regime Accounts")
+    st.markdown("### Browse Accounts")
 
-    regime_accounts = db.get_all_accounts(stance=PoliticalStance.PRO_REGIME, limit=20)
-    if regime_accounts:
-        data = []
-        for acc in regime_accounts:
-            data.append({
-                "Username": f"https://x.com/{acc.username}",
-                "Type": acc.account_type.value.replace("_", " ").title(),
-                "Followers": f"{acc.followers_count:,}",
-                "Bot Score": f"{acc.bot_score:.2f}" if acc.bot_score else "-",
-                "Seed": "VERIFIED" if acc.is_seed else "-",
-            })
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        if st.button(f"Pro-Regime ({len(pro_regime)})", use_container_width=True, type="primary"):
+            st.session_state["filter_stance"] = "pro_regime"
+    with col2:
+        anti_regime = [a for a in accounts if a.political_stance == PoliticalStance.ANTI_REGIME]
+        if st.button(f"Anti-Regime ({len(anti_regime)})", use_container_width=True):
+            st.session_state["filter_stance"] = "anti_regime"
+    with col3:
+        if st.button(f"Suspected Bots ({len(high_bot)})", use_container_width=True):
+            st.session_state["filter_min_bot"] = 0.7
+    with col4:
+        if st.button("View All Accounts", use_container_width=True):
+            st.session_state["filter_stance"] = None
+            st.session_state["filter_min_bot"] = None
 
-        df = pd.DataFrame(data)
-        st.dataframe(df, use_container_width=True, hide_index=True, column_config={
-            "Username": st.column_config.LinkColumn(display_text=r"https://x\.com/(.*)")
-        })
-    else:
-        st.info("Run stance classification: `python -m scripts.analyze stance`")
-
-    # Call to action
-    st.markdown("---")
-    st.markdown("""
-    ### Scale Up Detection
-
-    **Current:** {} accounts tracked
-    **Goal:** Identify thousands of regime-affiliated accounts
-
-    Go to **Collect More** to learn how to expand the network and find hidden amplifiers.
-    """.format(stats['accounts']))
+    # Show message if filter was set
+    if st.session_state.get("filter_stance") or st.session_state.get("filter_min_bot"):
+        st.info("Go to **Accounts** page in the sidebar to see filtered results.")
 
 
 def show_accounts():
     """Accounts search and detail view."""
     st.markdown("# Account Database")
+
+    # Get filter defaults from session state (set from Overview page)
+    default_stance = st.session_state.get("filter_stance", "All")
+    default_min_bot = st.session_state.get("filter_min_bot", 0.0) or 0.0
+
+    # Clear session state after reading
+    if "filter_stance" in st.session_state:
+        del st.session_state["filter_stance"]
+    if "filter_min_bot" in st.session_state:
+        del st.session_state["filter_min_bot"]
+
+    # Map stance value to index for selectbox
+    stance_options = ["All", "pro_regime", "anti_regime", "neutral", "unknown"]
+    stance_index = stance_options.index(default_stance) if default_stance in stance_options else 0
 
     # Filters
     col1, col2, col3, col4 = st.columns(4)
@@ -390,11 +400,12 @@ def show_accounts():
     with col2:
         stance_filter = st.selectbox(
             "Stance",
-            ["All", "pro_regime", "anti_regime", "neutral", "unknown"],
+            stance_options,
+            index=stance_index,
         )
 
     with col3:
-        min_bot = st.slider("Min Bot Score", 0.0, 1.0, 0.0, 0.1)
+        min_bot = st.slider("Min Bot Score", 0.0, 1.0, default_min_bot, 0.1)
 
     with col4:
         is_seed = st.checkbox("Verified seeds only")
