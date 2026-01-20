@@ -498,6 +498,53 @@ class Database:
                 params,
             )
 
+    def update_accounts_classification_batch(
+        self,
+        updates: list[dict],
+    ) -> None:
+        """Batch update classifications for multiple accounts.
+
+        Args:
+            updates: List of dicts with keys: account_id, account_type, political_stance,
+                     political_taxonomy, threat_level, regime_score (all optional except account_id)
+        """
+        if not updates:
+            return
+
+        with self.connection() as conn:
+            for update in updates:
+                account_id = update.get("account_id")
+                if not account_id:
+                    continue
+
+                set_parts = []
+                params = []
+
+                if "account_type" in update and update["account_type"] is not None:
+                    set_parts.append("account_type = ?")
+                    params.append(update["account_type"].value if hasattr(update["account_type"], 'value') else update["account_type"])
+                if "political_stance" in update and update["political_stance"] is not None:
+                    set_parts.append("political_stance = ?")
+                    params.append(update["political_stance"].value if hasattr(update["political_stance"], 'value') else update["political_stance"])
+                if "political_taxonomy" in update and update["political_taxonomy"] is not None:
+                    set_parts.append("political_taxonomy = ?")
+                    params.append(update["political_taxonomy"].value if hasattr(update["political_taxonomy"], 'value') else update["political_taxonomy"])
+                if "threat_level" in update and update["threat_level"] is not None:
+                    set_parts.append("threat_level = ?")
+                    params.append(update["threat_level"].value if hasattr(update["threat_level"], 'value') else update["threat_level"])
+                if "regime_score" in update and update["regime_score"] is not None:
+                    set_parts.append("regime_score = ?")
+                    params.append(update["regime_score"])
+
+                if set_parts:
+                    set_parts.append("last_updated = CURRENT_TIMESTAMP")
+                    params.append(account_id)
+                    conn.execute(
+                        f"UPDATE accounts SET {', '.join(set_parts)} WHERE id = ?",
+                        params,
+                    )
+            conn.commit()
+
     def update_account_features(self, account_id: int, features: dict) -> None:
         """Update features for an account."""
         with self.connection() as conn:

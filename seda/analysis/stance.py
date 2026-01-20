@@ -441,6 +441,7 @@ Respond ONLY with a JSON object:
         self,
         account_ids: Optional[list[int]] = None,
         use_llm: bool = True,
+        batch_size: int = 100,
     ) -> int:
         """Classify all accounts (or specified accounts).
 
@@ -453,6 +454,8 @@ Respond ONLY with a JSON object:
             accounts = [a for a in accounts if a]
 
         classified = 0
+        batch_updates = []
+
         for account in accounts:
             if not account.id:
                 continue
@@ -463,20 +466,30 @@ Respond ONLY with a JSON object:
             # Determine account type
             account_type = self._determine_account_type(account, stance)
 
-            # Update database
-            self.db.update_account_classification(
-                account.id,
-                account_type=account_type,
-                political_stance=stance,
-                political_taxonomy=taxonomy,
-                threat_level=threat_level,
-            )
-
-            # Update regime score
+            # Calculate regime score
             regime_score = self._stance_to_score(stance)
-            self.db.update_account_scores(account.id, regime_score=regime_score)
+
+            # Add to batch
+            batch_updates.append({
+                "account_id": account.id,
+                "account_type": account_type,
+                "political_stance": stance,
+                "political_taxonomy": taxonomy,
+                "threat_level": threat_level,
+                "regime_score": regime_score,
+            })
 
             classified += 1
+
+            # Commit batch when it reaches batch_size
+            if len(batch_updates) >= batch_size:
+                self.db.update_accounts_classification_batch(batch_updates)
+                print(f"  Processed {classified} accounts...")
+                batch_updates = []
+
+        # Commit remaining updates
+        if batch_updates:
+            self.db.update_accounts_classification_batch(batch_updates)
 
         return classified
 
