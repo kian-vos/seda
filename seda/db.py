@@ -501,49 +501,62 @@ class Database:
     def update_accounts_classification_batch(
         self,
         updates: list[dict],
+        max_retries: int = 3,
     ) -> None:
         """Batch update classifications for multiple accounts.
 
         Args:
             updates: List of dicts with keys: account_id, account_type, political_stance,
                      political_taxonomy, threat_level, regime_score (all optional except account_id)
+            max_retries: Number of retries on connection failure
         """
         if not updates:
             return
 
-        with self.connection() as conn:
-            for update in updates:
-                account_id = update.get("account_id")
-                if not account_id:
-                    continue
+        import time
 
-                set_parts = []
-                params = []
+        for attempt in range(max_retries):
+            try:
+                with self.connection() as conn:
+                    for update in updates:
+                        account_id = update.get("account_id")
+                        if not account_id:
+                            continue
 
-                if "account_type" in update and update["account_type"] is not None:
-                    set_parts.append("account_type = ?")
-                    params.append(update["account_type"].value if hasattr(update["account_type"], 'value') else update["account_type"])
-                if "political_stance" in update and update["political_stance"] is not None:
-                    set_parts.append("political_stance = ?")
-                    params.append(update["political_stance"].value if hasattr(update["political_stance"], 'value') else update["political_stance"])
-                if "political_taxonomy" in update and update["political_taxonomy"] is not None:
-                    set_parts.append("political_taxonomy = ?")
-                    params.append(update["political_taxonomy"].value if hasattr(update["political_taxonomy"], 'value') else update["political_taxonomy"])
-                if "threat_level" in update and update["threat_level"] is not None:
-                    set_parts.append("threat_level = ?")
-                    params.append(update["threat_level"].value if hasattr(update["threat_level"], 'value') else update["threat_level"])
-                if "regime_score" in update and update["regime_score"] is not None:
-                    set_parts.append("regime_score = ?")
-                    params.append(update["regime_score"])
+                        set_parts = []
+                        params = []
 
-                if set_parts:
-                    set_parts.append("last_updated = CURRENT_TIMESTAMP")
-                    params.append(account_id)
-                    conn.execute(
-                        f"UPDATE accounts SET {', '.join(set_parts)} WHERE id = ?",
-                        params,
-                    )
-            conn.commit()
+                        if "account_type" in update and update["account_type"] is not None:
+                            set_parts.append("account_type = ?")
+                            params.append(update["account_type"].value if hasattr(update["account_type"], 'value') else update["account_type"])
+                        if "political_stance" in update and update["political_stance"] is not None:
+                            set_parts.append("political_stance = ?")
+                            params.append(update["political_stance"].value if hasattr(update["political_stance"], 'value') else update["political_stance"])
+                        if "political_taxonomy" in update and update["political_taxonomy"] is not None:
+                            set_parts.append("political_taxonomy = ?")
+                            params.append(update["political_taxonomy"].value if hasattr(update["political_taxonomy"], 'value') else update["political_taxonomy"])
+                        if "threat_level" in update and update["threat_level"] is not None:
+                            set_parts.append("threat_level = ?")
+                            params.append(update["threat_level"].value if hasattr(update["threat_level"], 'value') else update["threat_level"])
+                        if "regime_score" in update and update["regime_score"] is not None:
+                            set_parts.append("regime_score = ?")
+                            params.append(update["regime_score"])
+
+                        if set_parts:
+                            set_parts.append("last_updated = CURRENT_TIMESTAMP")
+                            params.append(account_id)
+                            conn.execute(
+                                f"UPDATE accounts SET {', '.join(set_parts)} WHERE id = ?",
+                                params,
+                            )
+                    conn.commit()
+                return  # Success, exit retry loop
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"    Retry {attempt + 1}/{max_retries} after error: {e}")
+                    time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+                else:
+                    raise
 
     def update_account_features(self, account_id: int, features: dict) -> None:
         """Update features for an account."""
