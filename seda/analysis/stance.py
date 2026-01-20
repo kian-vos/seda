@@ -9,6 +9,7 @@ from seda.models import (
     AccountType,
     PoliticalStance,
     PoliticalTaxonomy,
+    ThreatLevel,
     Tweet,
 )
 from seda.analysis.nlp import get_nlp
@@ -39,8 +40,8 @@ class StanceClassifier:
         account: Account,
         tweets: Optional[list[Tweet]] = None,
         use_llm: bool = True,
-    ) -> tuple[PoliticalStance, Optional[PoliticalTaxonomy]]:
-        """Classify an account's political stance.
+    ) -> tuple[PoliticalStance, Optional[PoliticalTaxonomy], ThreatLevel]:
+        """Classify an account's political stance and threat level.
 
         Args:
             account: Account to classify
@@ -48,7 +49,7 @@ class StanceClassifier:
             use_llm: Whether to use LLM for nuanced classification
 
         Returns:
-            Tuple of (stance, taxonomy)
+            Tuple of (stance, taxonomy, threat_level)
         """
         if tweets is None and account.id:
             tweets = self.db.get_tweets_by_account(account.id, limit=50)
@@ -68,7 +69,14 @@ class StanceClassifier:
                 stance = llm_stance
                 taxonomy = llm_taxonomy
 
-        return stance, taxonomy
+        # Create a temporary account copy with the stance for threat classification
+        account_with_stance = Account(**account.model_dump())
+        account_with_stance.political_stance = stance
+
+        # Classify threat level for pro-regime accounts
+        threat_level = self.classify_threat_level(account_with_stance, tweets or [])
+
+        return stance, taxonomy, threat_level
 
     def _rule_based_classify(
         self, account: Account, tweets: list[Tweet]
@@ -219,6 +227,120 @@ class StanceClassifier:
 
         return PoliticalTaxonomy.UNKNOWN
 
+    def classify_threat_level(
+        self,
+        account: Account,
+        tweets: list[Tweet],
+    ) -> ThreatLevel:
+        """Classify threat level for pro-regime accounts.
+
+        Args:
+            account: Account to classify
+            tweets: Account's tweets
+
+        Returns:
+            ThreatLevel classification
+        """
+        # Only classify pro-regime accounts
+        if account.political_stance != PoliticalStance.PRO_REGIME:
+            return ThreatLevel.UNKNOWN
+
+        # Check if known IRGC media account
+        if self.nlp.is_irgc_media_account(account.username):
+            return ThreatLevel.STATE_PROPAGANDIST
+
+        # Combine all text for analysis
+        all_text = account.bio or ""
+        for t in tweets:
+            all_text += " " + (t.text or "")
+
+        # Count threat signals across all tweets
+        violence_count = 0
+        irgc_count = 0
+        doxxing_count = 0
+        harassment_count = 0
+
+        for t in tweets:
+            if not t.text:
+                continue
+            signals = self.nlp.get_threat_signals(t.text)
+            violence_count += len(signals["violence_keywords"])
+            irgc_count += len(signals["irgc_signals"])
+            doxxing_count += len(signals["doxxing_indicators"])
+            harassment_count += len(signals["harassment_keywords"])
+
+        # Also check bio
+        bio_signals = self.nlp.get_threat_signals(account.bio or "")
+        irgc_count += len(bio_signals["irgc_signals"])
+
+        # Priority classification (most dangerous first)
+
+        # 1. Violence inciter - immediate flag for calls to violence
+        if violence_count >= 2:
+            return ThreatLevel.VIOLENCE_INCITER
+
+        # 2. Doxxer - exposes opposition identities
+        if doxxing_count >= 2:
+            return ThreatLevel.DOXXER
+
+        # 3. IRGC operative - direct IRGC connection
+        if irgc_count >= 3 or (irgc_count >= 1 and account.seed_category and "irgc" in account.seed_category.value):
+            return ThreatLevel.IRGC_OPERATIVE
+
+        # 4. State propagandist - official state media
+        if account.is_seed and account.seed_category:
+            if account.seed_category.value in ["official_state", "state_media"]:
+                return ThreatLevel.STATE_PROPAGANDIST
+
+        # 5. Check if likely a bot (amplifier bot)
+        if account.bot_score and account.bot_score >= 0.7:
+            return ThreatLevel.AMPLIFIER_BOT
+
+        # 6. Troll - harassment campaigns
+        if harassment_count >= 3:
+            return ThreatLevel.TROLL
+
+        # 7. Passive supporter - engages but doesn't incite
+        if violence_count == 0 and harassment_count < 2:
+            return ThreatLevel.PASSIVE_SUPPORTER
+
+        return ThreatLevel.UNKNOWN
+
+    def _count_account_threat_signals(
+        self,
+        account: Account,
+        tweets: list[Tweet],
+    ) -> dict:
+        """Count all threat signals for an account.
+
+        Returns dict with counts for each signal type.
+        """
+        counts = {
+            "violence": 0,
+            "irgc": 0,
+            "doxxing": 0,
+            "harassment": 0,
+        }
+
+        # Check bio
+        bio_signals = self.nlp.get_threat_signals(account.bio or "")
+        counts["violence"] += len(bio_signals["violence_keywords"])
+        counts["irgc"] += len(bio_signals["irgc_signals"])
+        counts["doxxing"] += len(bio_signals["doxxing_indicators"])
+        counts["harassment"] += len(bio_signals["harassment_keywords"])
+
+        # Check tweets
+        for t in tweets:
+            if not t.text:
+                continue
+            signals = self.nlp.get_threat_signals(t.text)
+            counts["violence"] += len(signals["violence_keywords"])
+            counts["irgc"] += len(signals["irgc_signals"])
+            counts["doxxing"] += len(signals["doxxing_indicators"])
+            counts["harassment"] += len(signals["harassment_keywords"])
+
+        return counts
+
     def _llm_classify(
         self, account: Account, tweets: list[Tweet]
     ) -> tuple[PoliticalStance, Optional[PoliticalTaxonomy]]:
@@ -336,7 +458,7 @@ Respond ONLY with a JSON object:
                 continue
 
             tweets = self.db.get_tweets_by_account(account.id, limit=50)
-            stance, taxonomy = self.classify_account(account, tweets, use_llm=use_llm)
+            stance, taxonomy, threat_level = self.classify_account(account, tweets, use_llm=use_llm)
 
             # Determine account type
             account_type = self._determine_account_type(account, stance)
@@ -347,6 +469,7 @@ Respond ONLY with a JSON object:
                 account_type=account_type,
                 political_stance=stance,
                 political_taxonomy=taxonomy,
+                threat_level=threat_level,
             )
 
             # Update regime score
@@ -356,6 +479,19 @@ Respond ONLY with a JSON object:
             classified += 1
 
         return classified
+
+    def get_threat_breakdown(self) -> dict[ThreatLevel, int]:
+        """Get breakdown of pro-regime accounts by threat level.
+
+        Returns dict mapping ThreatLevel to count.
+        """
+        accounts = self.db.get_all_accounts(stance=PoliticalStance.PRO_REGIME)
+        breakdown = {level: 0 for level in ThreatLevel}
+
+        for acc in accounts:
+            breakdown[acc.threat_level] = breakdown.get(acc.threat_level, 0) + 1
+
+        return breakdown
 
     def _determine_account_type(
         self, account: Account, stance: PoliticalStance

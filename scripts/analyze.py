@@ -18,7 +18,9 @@ from seda.analysis import (
     CoordinationDetector,
     FeatureExtractor,
     StanceClassifier,
+    is_embeddings_available,
 )
+from seda.models import ThreatLevel, PoliticalStance
 
 app = typer.Typer(help="Run analysis pipelines")
 console = Console()
@@ -364,6 +366,199 @@ def explain(
         for tweet in tweets:
             text = tweet.text[:100] + "..." if len(tweet.text) > 100 else tweet.text
             console.print(f"  - {text}")
+
+
+@app.command("train-bot")
+def train_bot(
+    use_weak_labels: bool = typer.Option(True, "--weak", help="Use weak supervision labels"),
+    cv_folds: int = typer.Option(5, "--cv", help="Cross-validation folds"),
+):
+    """Train bot detection model using LightGBM."""
+    detector = BotDetector()
+
+    console.print("[blue]Training bot detection model...[/blue]")
+
+    if use_weak_labels:
+        console.print("Creating weak supervision labels...")
+        positive_ids, negative_ids = detector.create_weak_labels()
+        console.print(f"  Found {len(positive_ids)} likely bots")
+        console.print(f"  Found {len(negative_ids)} likely humans")
+
+        if len(positive_ids) < 5 or len(negative_ids) < 5:
+            console.print("[red]Not enough training data. Collect more accounts first.[/red]")
+            raise typer.Exit(1)
+
+        # Cross-validation
+        if cv_folds > 1:
+            console.print(f"\nRunning {cv_folds}-fold cross-validation...")
+            cv_results = detector.cross_validate(positive_ids, negative_ids, n_folds=cv_folds)
+            if "mean_auc" in cv_results:
+                console.print(f"  Mean AUC: {cv_results['mean_auc']:.3f} (+/- {cv_results['std_auc']:.3f})")
+            else:
+                console.print("  [yellow]Cross-validation failed[/yellow]")
+
+        # Train final model
+        result = detector.train_from_weak_labels()
+        if result:
+            console.print(f"\n[green]Model trained successfully![/green]")
+            console.print(f"  Final AUC: {result.get('auc', 'N/A')}")
+            console.print(f"  Model saved to: data/models/bot_classifier.lgb")
+        else:
+            console.print("[red]Training failed[/red]")
+    else:
+        console.print("[yellow]Manual labels not supported yet. Use --weak[/yellow]")
+
+
+@app.command("embed")
+def embed(
+    limit: int = typer.Option(None, "--limit", "-l", help="Limit accounts to embed"),
+    tweets: bool = typer.Option(False, "--tweets", help="Also embed tweets"),
+):
+    """Generate ParsBERT embeddings for accounts/tweets."""
+    if not is_embeddings_available():
+        console.print("[red]Embeddings require transformers and torch.[/red]")
+        console.print("Install with: pip install transformers torch")
+        raise typer.Exit(1)
+
+    from seda.analysis.embeddings import PersianEmbedder
+
+    console.print("[blue]Initializing ParsBERT model...[/blue]")
+    embedder = PersianEmbedder()
+    console.print(f"  Using device: {embedder.device}")
+
+    console.print("\n[blue]Generating account embeddings...[/blue]")
+    db = get_db()
+
+    if limit:
+        accounts = db.get_all_accounts(limit=limit)
+        account_ids = [a.id for a in accounts if a.id]
+    else:
+        account_ids = None
+
+    embedded = embedder.embed_all_accounts(account_ids=account_ids)
+    console.print(f"[green]Embedded {embedded} accounts[/green]")
+
+    if tweets:
+        console.print("\n[blue]Generating tweet embeddings...[/blue]")
+        tweet_count = embedder.embed_all_tweets(limit=limit or 10000)
+        console.print(f"[green]Embedded {tweet_count} tweets[/green]")
+
+
+@app.command("threat")
+def threat_report():
+    """Generate threat level report for pro-regime accounts."""
+    db = get_db()
+
+    console.print("\n[bold cyan]═══════════════════════════════════════[/bold cyan]")
+    console.print("[bold cyan]     Pro-Regime Threat Level Report    [/bold cyan]")
+    console.print("[bold cyan]═══════════════════════════════════════[/bold cyan]\n")
+
+    # Get threat stats
+    threat_stats = db.get_threat_level_stats()
+
+    if not threat_stats:
+        console.print("[yellow]No threat levels classified yet. Run stance analysis first.[/yellow]")
+        return
+
+    # Display breakdown
+    total = sum(threat_stats.values())
+    console.print(f"[bold]Total Pro-Regime Accounts: {total}[/bold]\n")
+
+    table = Table()
+    table.add_column("Threat Level", style="bold")
+    table.add_column("Count", justify="right")
+    table.add_column("Percentage", justify="right")
+    table.add_column("Risk", justify="center")
+
+    # Risk indicators
+    risk_levels = {
+        "violence_inciter": ("CRITICAL", "red"),
+        "doxxer": ("CRITICAL", "red"),
+        "irgc_operative": ("HIGH", "yellow"),
+        "state_propagandist": ("HIGH", "yellow"),
+        "amplifier_bot": ("MEDIUM", "cyan"),
+        "troll": ("MEDIUM", "cyan"),
+        "passive_supporter": ("LOW", "green"),
+        "unknown": ("UNKNOWN", "dim"),
+    }
+
+    for level, count in sorted(threat_stats.items(), key=lambda x: -x[1]):
+        pct = (count / total) * 100 if total > 0 else 0
+        risk, color = risk_levels.get(level, ("UNKNOWN", "dim"))
+        table.add_row(
+            level.replace("_", " ").title(),
+            str(count),
+            f"{pct:.1f}%",
+            f"[{color}]{risk}[/{color}]",
+        )
+
+    console.print(table)
+
+    # High priority targets
+    console.print("\n[bold]High-Priority Targets (Violence Inciters + Doxxers):[/bold]")
+
+    high_priority = []
+    for level in [ThreatLevel.VIOLENCE_INCITER, ThreatLevel.DOXXER]:
+        accounts = db.get_accounts_by_threat_level(level, limit=10)
+        high_priority.extend(accounts)
+
+    if high_priority:
+        for acc in high_priority[:15]:
+            console.print(f"  @{acc.username} - {acc.threat_level.value}")
+    else:
+        console.print("  None identified yet")
+
+    console.print("\n[dim]Report generated at " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "[/dim]")
+
+
+@app.command("similarity")
+def find_similar(
+    username: str = typer.Argument(..., help="Username to find similar accounts for"),
+    top_k: int = typer.Option(10, "--top", "-k", help="Number of similar accounts"),
+):
+    """Find accounts similar to a given account using embeddings."""
+    if not is_embeddings_available():
+        console.print("[red]Embeddings require transformers and torch.[/red]")
+        console.print("Install with: pip install transformers torch")
+        raise typer.Exit(1)
+
+    from seda.analysis.embeddings import PersianEmbedder
+
+    db = get_db()
+    username = username.lstrip("@")
+    account = db.get_account_by_username(username)
+
+    if not account:
+        console.print(f"[red]Account not found: @{username}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[blue]Finding accounts similar to @{username}...[/blue]")
+
+    embedder = PersianEmbedder()
+
+    similar = embedder.find_similar_accounts(account, top_k=top_k)
+
+    if not similar:
+        console.print("[yellow]No similar accounts found. Generate embeddings first.[/yellow]")
+        return
+
+    console.print(f"\n[bold]Top {len(similar)} Similar Accounts:[/bold]")
+
+    table = Table()
+    table.add_column("Username")
+    table.add_column("Similarity", justify="right")
+    table.add_column("Stance")
+    table.add_column("Threat Level")
+
+    for sim_acc, score in similar:
+        table.add_row(
+            f"@{sim_acc.username}",
+            f"{score:.3f}",
+            sim_acc.political_stance.value,
+            sim_acc.threat_level.value if sim_acc.threat_level else "unknown",
+        )
+
+    console.print(table)
 
 
 if __name__ == "__main__":

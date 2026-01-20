@@ -16,7 +16,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from seda.db import get_db
-from seda.models import PoliticalStance, AccountType, CoordinationType
+from seda.models import PoliticalStance, AccountType, CoordinationType, ThreatLevel
 
 
 def get_logo_base64():
@@ -405,6 +405,86 @@ def show_home():
         else:
             st.info("No accounts in database yet.")
 
+    # Pro-Regime Threat Breakdown
+    st.markdown("---")
+    st.markdown("### Pro-Regime Threat Breakdown")
+
+    if pro_regime:
+        # Count by threat level
+        threat_counts = {}
+        for acc in pro_regime:
+            level = acc.threat_level.value if acc.threat_level else "unknown"
+            threat_counts[level] = threat_counts.get(level, 0) + 1
+
+        # Define threat level colors and display names
+        threat_info = {
+            "violence_inciter": {"color": "#ff0000", "name": "Violence Inciters", "icon": ""},
+            "doxxer": {"color": "#ff4500", "name": "Doxxers", "icon": ""},
+            "irgc_operative": {"color": "#dc143c", "name": "IRGC Operatives", "icon": ""},
+            "state_propagandist": {"color": "#b22222", "name": "State Propagandists", "icon": ""},
+            "amplifier_bot": {"color": "#cd5c5c", "name": "Amplifier Bots", "icon": ""},
+            "troll": {"color": "#f08080", "name": "Trolls", "icon": ""},
+            "passive_supporter": {"color": "#ffa07a", "name": "Passive Supporters", "icon": ""},
+            "unknown": {"color": "#808080", "name": "Unclassified", "icon": ""},
+        }
+
+        # Create donut chart
+        threat_data = {
+            "Category": [threat_info.get(k, {"name": k})["name"] for k in threat_counts.keys()],
+            "Count": list(threat_counts.values()),
+            "Color": [threat_info.get(k, {"color": "#808080"})["color"] for k in threat_counts.keys()],
+        }
+
+        col1, col2 = st.columns([1, 1])
+
+        with col1:
+            fig = px.pie(
+                threat_data,
+                values="Count",
+                names="Category",
+                color="Category",
+                color_discrete_map={
+                    threat_info[k]["name"]: threat_info[k]["color"]
+                    for k in threat_info
+                },
+                hole=0.4,
+            )
+            fig.update_layout(
+                height=350,
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font_color='#cccccc',
+                legend=dict(font=dict(color='#cccccc', size=10)),
+            )
+            fig.update_traces(
+                textinfo='percent+value',
+                textfont_color='white',
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col2:
+            st.markdown("**Threat Categories**")
+
+            # Display clickable threat level cards
+            for level, info in threat_info.items():
+                if level in threat_counts and threat_counts[level] > 0:
+                    count = threat_counts[level]
+                    pct = (count / len(pro_regime)) * 100 if pro_regime else 0
+
+                    # Create clickable row
+                    col_icon, col_name, col_count = st.columns([1, 4, 2])
+                    with col_icon:
+                        st.markdown(f"<span style='color:{info['color']};font-size:1.5em;'>{info['icon']}</span>", unsafe_allow_html=True)
+                    with col_name:
+                        if st.button(info["name"], key=f"threat_{level}", use_container_width=True):
+                            st.session_state["filter_threat_level"] = level
+                            st.session_state["navigate_to"] = "Accounts"
+                            st.rerun()
+                    with col_count:
+                        st.markdown(f"**{count}** ({pct:.1f}%)")
+    else:
+        st.info("No pro-regime accounts classified yet. Run stance analysis first.")
+
     # Quick links to filtered views
     st.markdown("---")
     st.markdown("### Browse Accounts")
@@ -435,18 +515,25 @@ def show_accounts():
     # Get filter defaults from session state (set from Overview page)
     default_stance = st.session_state.get("filter_stance", "All")
     default_min_bot = st.session_state.get("filter_min_bot", 0.0) or 0.0
+    default_threat_level = st.session_state.get("filter_threat_level", "All")
 
     # Clear session state after reading
     if "filter_stance" in st.session_state:
         del st.session_state["filter_stance"]
     if "filter_min_bot" in st.session_state:
         del st.session_state["filter_min_bot"]
+    if "filter_threat_level" in st.session_state:
+        del st.session_state["filter_threat_level"]
 
     # Map stance value to index for selectbox (exclude anti_regime to protect opposition)
     stance_options = ["All", "pro_regime", "neutral", "unknown"]
     stance_index = stance_options.index(default_stance) if default_stance in stance_options else 0
 
-    # Filters
+    # Threat level options
+    threat_options = ["All"] + [t.value for t in ThreatLevel if t != ThreatLevel.UNKNOWN]
+    threat_index = threat_options.index(default_threat_level) if default_threat_level in threat_options else 0
+
+    # Filters - two rows
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
@@ -460,9 +547,17 @@ def show_accounts():
         )
 
     with col3:
-        min_bot = st.slider("Min Bot Score", 0.0, 1.0, default_min_bot, 0.1)
+        threat_filter = st.selectbox(
+            "Threat Level",
+            threat_options,
+            index=threat_index,
+        )
 
     with col4:
+        min_bot = st.slider("Min Bot Score", 0.0, 1.0, default_min_bot, 0.1)
+
+    col5, col6 = st.columns([1, 3])
+    with col5:
         is_seed = st.checkbox("Verified seeds only")
 
     # Get filtered accounts
@@ -472,13 +567,17 @@ def show_accounts():
         is_seed=is_seed if is_seed else None,
         min_bot_score=min_bot if min_bot > 0 else None,
         stance=stance,
-        limit=200,
+        limit=500,
     )
 
     # Filter by search query
     if search_query:
         search_lower = search_query.lower().lstrip("@")
         accounts = [a for a in accounts if search_lower in a.username.lower()]
+
+    # Filter by threat level
+    if threat_filter != "All":
+        accounts = [a for a in accounts if a.threat_level.value == threat_filter]
 
     st.markdown(f"**{len(accounts)} accounts found**")
 
@@ -495,6 +594,7 @@ def show_accounts():
             "Followers": acc.followers_count,
             "Bot Score": acc.bot_score,
             "Stance": acc.political_stance.value,
+            "Threat Level": acc.threat_level.value if acc.threat_level else "unknown",
             "Coord Score": acc.coordination_score,
             "Type": acc.account_type.value,
             "Verified Seed": "YES" if acc.is_seed else "",
@@ -597,6 +697,7 @@ def show_account_detail(username: str):
                 st.plotly_chart(fig, use_container_width=True)
 
         st.markdown(f"**Political Taxonomy:** {account.political_taxonomy.value}")
+        st.markdown(f"**Threat Level:** {account.threat_level.value if account.threat_level else 'unknown'}")
 
     # Recent tweets
     st.markdown("**Recent Tweets**")
@@ -829,6 +930,33 @@ def show_network():
     """Network visualization."""
     st.markdown("# Network Visualization")
 
+    # Import network viz module
+    try:
+        # Try relative import first (when run as module)
+        from .network_viz import (
+            create_threat_network,
+            create_coordination_network,
+            is_network_viz_available,
+        )
+        network_available = is_network_viz_available()
+    except ImportError:
+        try:
+            # Try absolute import (when run with streamlit)
+            import sys
+            from pathlib import Path
+            # Add parent directory to path if needed
+            dashboard_dir = Path(__file__).parent
+            if str(dashboard_dir) not in sys.path:
+                sys.path.insert(0, str(dashboard_dir))
+            from network_viz import (
+                create_threat_network,
+                create_coordination_network,
+                is_network_viz_available,
+            )
+            network_available = is_network_viz_available()
+        except ImportError:
+            network_available = False
+
     # Simple network stats
     accounts = db.get_all_accounts(is_seed=True)
 
@@ -862,7 +990,38 @@ def show_network():
     else:
         st.info("No seed accounts collected yet.")
 
-    # Coordination network placeholder
+    # Threat Level Network
+    st.markdown("---")
+    st.markdown("### Pro-Regime Threat Network")
+
+    if network_available:
+        pro_regime_accounts = db.get_all_accounts(stance=PoliticalStance.PRO_REGIME, limit=300)
+
+        if pro_regime_accounts:
+            threat_fig = create_threat_network(pro_regime_accounts, max_nodes=300)
+            if threat_fig:
+                st.plotly_chart(threat_fig, use_container_width=True)
+
+                # Legend
+                st.markdown("""
+                **Threat Level Legend:**
+                - <span style='color:#ff0000'>Violence Inciters</span> - Calls for violence against protesters
+                - <span style='color:#ff4500'>Doxxers</span> - Exposes opposition identities
+                - <span style='color:#dc143c'>IRGC Operatives</span> - Direct IRGC connection
+                - <span style='color:#b22222'>State Propagandists</span> - Official media/accounts
+                - <span style='color:#cd5c5c'>Amplifier Bots</span> - Automated amplification
+                - <span style='color:#f08080'>Trolls</span> - Harassment campaigns
+                - <span style='color:#ffa07a'>Passive Supporters</span> - Engages but doesn't incite
+                """, unsafe_allow_html=True)
+            else:
+                st.info("Not enough data for threat network visualization.")
+        else:
+            st.info("No pro-regime accounts found. Run stance analysis first.")
+    else:
+        st.warning("Network visualization requires networkx. Install with: `pip install networkx`")
+
+    # Coordination network
+    st.markdown("---")
     st.markdown("### Coordination Network")
     clusters = db.get_clusters()
 
@@ -896,6 +1055,13 @@ def show_network():
             yaxis=dict(gridcolor='#333'),
         )
         st.plotly_chart(fig, use_container_width=True)
+
+        # Coordination network graph
+        if network_available:
+            all_accounts = db.get_all_accounts(limit=500)
+            coord_fig = create_coordination_network(clusters, all_accounts, max_nodes=300)
+            if coord_fig:
+                st.plotly_chart(coord_fig, use_container_width=True)
     else:
         st.info("No coordination clusters detected. Run network expansion first.")
 

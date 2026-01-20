@@ -135,6 +135,163 @@ class PersianNLP:
         "uprising",
     ]
 
+    # Violence inciter keywords (Persian)
+    VIOLENCE_KEYWORDS_FA = [
+        # Direct violence calls
+        "اعدام کنید",        # Execute them
+        "بکشید",            # Kill them
+        "به درک",           # Send to hell
+        "نابود کنید",       # Destroy them
+        "تیرباران",         # Firing squad
+        "دار بزنید",        # Hang them
+        "اعدامشان",         # Execute them (variant)
+        "بزنید",            # Beat them
+        # Dehumanization
+        "اوباش",            # Thugs
+        "اراذل",            # Riffraff
+        "حشرات",           # Insects
+        "سگ",              # Dogs (pejorative)
+        "موش",             # Rats
+        "نجس",             # Impure/unclean
+        # Incitement language
+        "سرکوب کنید",       # Suppress them
+        "جمع کنید",        # Round them up
+        "پاکسازی",         # Cleanse/purge
+        "ریشه کن",         # Eradicate
+        # Targeting protesters
+        "آشوبگر باید",      # Rioters must...
+        "اغتشاشگر مرگ",     # Death to rioters
+        "فتنه گر",         # Seditionist
+        "مزدور باید",       # Mercenaries must...
+        "ضد انقلاب",        # Counter-revolutionary
+    ]
+
+    # Violence inciter keywords (English)
+    VIOLENCE_KEYWORDS_EN = [
+        "execute them",
+        "hang them",
+        "kill them",
+        "death to rioters",
+        "firing squad",
+        "eliminate",
+        "destroy protesters",
+        "crush the uprising",
+        "no mercy",
+        "punish rioters",
+        "make example of",
+        "traitors deserve",
+    ]
+
+    # IRGC strong signals (Persian)
+    IRGC_STRONG_SIGNALS_FA = [
+        # Organizations
+        "سپاه پاسداران",     # IRGC full name
+        "نیروی قدس",        # Quds Force
+        "بسیج مستضعفین",   # Basij full name
+        "حشد الشعبی",      # Iraqi PMF (IRGC proxy)
+        # Commanders and figures
+        "سلیمانی",         # Soleimani
+        "حاج قاسم",        # Haj Qasem
+        "قاآنی",           # Qaani (current Quds commander)
+        "جعفری",          # Jafari (former IRGC commander)
+        "شهید سلیمانی",    # Martyr Soleimani
+        "سردار سلیمانی",   # Commander Soleimani
+        # Proxies
+        "حزب الله",        # Hezbollah
+        "انصارالله",       # Houthis
+        "حماس",           # Hamas
+        "جهاد اسلامی",     # Islamic Jihad
+        "فاطمیون",        # Fatemiyoun (Afghan fighters)
+        "زینبیون",        # Zainabiyoun (Pakistani fighters)
+        # IRGC terminology
+        "مدافعان حرم",     # Defenders of the shrine
+        "محور مقاومت",     # Axis of Resistance
+        "جبهه مقاومت",     # Resistance front
+    ]
+
+    # IRGC strong signals (English)
+    IRGC_STRONG_SIGNALS_EN = [
+        "irgc",
+        "islamic revolutionary guard",
+        "quds force",
+        "basij",
+        "qasem soleimani",
+        "esmail qaani",
+        "axis of resistance",
+        "resistance axis",
+        "hezbollah",
+        "houthis",
+        "ansarallah",
+        "hamas",
+        "islamic jihad",
+        "fatemiyoun",
+        "zainabiyoun",
+        "pmf",
+        "popular mobilization",
+    ]
+
+    # Known IRGC-affiliated media accounts
+    IRGC_MEDIA_ACCOUNTS = [
+        "farsnews_agency",
+        "tasnimnews_en",
+        "sepahnews",
+        "press_tv",
+        "presstv",
+        "iraborhan",
+        "khaboronline",
+        "isaborhan",
+        "iikirgc",
+    ]
+
+    # Doxxing indicators (Persian)
+    DOXXING_KEYWORDS_FA = [
+        "شناسایی شد",      # Has been identified
+        "هویت",           # Identity
+        "آدرس",           # Address
+        "محل کار",        # Workplace
+        "خانواده",        # Family
+        "افشا شد",        # Has been exposed
+        "معرفی می‌کنیم",   # We introduce (expose)
+        "این فرد",        # This person
+        "مشخصات",         # Details/information
+    ]
+
+    # Doxxing indicators (English)
+    DOXXING_KEYWORDS_EN = [
+        "identified as",
+        "real name is",
+        "lives at",
+        "works at",
+        "family members",
+        "exposed",
+        "doxxed",
+        "personal information",
+    ]
+
+    # Harassment/troll indicators (Persian)
+    HARASSMENT_KEYWORDS_FA = [
+        "خفه شو",          # Shut up
+        "گمشو",            # Get lost
+        "نمک‌گیر",         # Sellout
+        "وطن‌فروش",        # Traitor
+        "خائن",            # Traitor
+        "بی‌ناموس",        # Dishonorable
+        "بی‌شرف",          # Shameless
+        "مزدور",           # Mercenary
+    ]
+
+    # Harassment/troll indicators (English)
+    HARASSMENT_KEYWORDS_EN = [
+        "shut up",
+        "go to hell",
+        "traitor",
+        "sellout",
+        "paid agent",
+        "foreign agent",
+        "cia agent",
+        "mossad agent",
+    ]
+
     def __init__(self):
         """Initialize Persian NLP processor."""
         self.normalizer = Normalizer() if HAZM_AVAILABLE else None
@@ -308,6 +465,151 @@ class PersianNLP:
 
         return text
 
+    def detect_violence_keywords(self, text: str) -> list[str]:
+        """Detect violence inciting keywords in text.
+
+        Returns list of matched violence keywords.
+        """
+        if not text:
+            return []
+
+        text_lower = text.lower()
+        text_normalized = self.normalize(text)
+
+        found = []
+
+        # Check Persian keywords
+        for keyword in self.VIOLENCE_KEYWORDS_FA:
+            if keyword in text_normalized:
+                found.append(keyword)
+
+        # Check English keywords
+        for keyword in self.VIOLENCE_KEYWORDS_EN:
+            if keyword in text_lower:
+                found.append(keyword)
+
+        return found
+
+    def detect_irgc_signals(self, text: str) -> list[str]:
+        """Detect IRGC-related signals in text.
+
+        Returns list of matched IRGC keywords/signals.
+        """
+        if not text:
+            return []
+
+        text_lower = text.lower()
+        text_normalized = self.normalize(text)
+
+        found = []
+
+        # Check Persian keywords
+        for keyword in self.IRGC_STRONG_SIGNALS_FA:
+            if keyword in text_normalized:
+                found.append(keyword)
+
+        # Check English keywords
+        for keyword in self.IRGC_STRONG_SIGNALS_EN:
+            if keyword in text_lower:
+                found.append(keyword)
+
+        return found
+
+    def detect_doxxing_indicators(self, text: str) -> list[str]:
+        """Detect doxxing indicators in text.
+
+        Returns list of matched doxxing keywords.
+        """
+        if not text:
+            return []
+
+        text_lower = text.lower()
+        text_normalized = self.normalize(text)
+
+        found = []
+
+        # Check Persian keywords
+        for keyword in self.DOXXING_KEYWORDS_FA:
+            if keyword in text_normalized:
+                found.append(keyword)
+
+        # Check English keywords
+        for keyword in self.DOXXING_KEYWORDS_EN:
+            if keyword in text_lower:
+                found.append(keyword)
+
+        return found
+
+    def detect_harassment_keywords(self, text: str) -> list[str]:
+        """Detect harassment/troll keywords in text.
+
+        Returns list of matched harassment keywords.
+        """
+        if not text:
+            return []
+
+        text_lower = text.lower()
+        text_normalized = self.normalize(text)
+
+        found = []
+
+        # Check Persian keywords
+        for keyword in self.HARASSMENT_KEYWORDS_FA:
+            if keyword in text_normalized:
+                found.append(keyword)
+
+        # Check English keywords
+        for keyword in self.HARASSMENT_KEYWORDS_EN:
+            if keyword in text_lower:
+                found.append(keyword)
+
+        return found
+
+    def is_irgc_media_account(self, username: str) -> bool:
+        """Check if username is a known IRGC-affiliated media account."""
+        if not username:
+            return False
+        return username.lower() in self.IRGC_MEDIA_ACCOUNTS
+
+    def get_violence_score(self, text: str) -> float:
+        """Get violence incitement score.
+
+        Returns:
+            Score from 0 (no violence) to 1 (high violence incitement)
+        """
+        if not text:
+            return 0.0
+
+        violence_keywords = self.detect_violence_keywords(text)
+        count = len(violence_keywords)
+
+        # Threshold: >= 2 keywords is high concern
+        if count >= 3:
+            return 1.0
+        elif count == 2:
+            return 0.8
+        elif count == 1:
+            return 0.4
+        return 0.0
+
+    def get_threat_signals(self, text: str) -> dict:
+        """Get all threat-related signals from text.
+
+        Returns dict with:
+            - violence_keywords: list of violence keywords found
+            - irgc_signals: list of IRGC signals found
+            - doxxing_indicators: list of doxxing indicators found
+            - harassment_keywords: list of harassment keywords found
+            - violence_score: violence incitement score (0-1)
+        """
+        return {
+            "violence_keywords": self.detect_violence_keywords(text),
+            "irgc_signals": self.detect_irgc_signals(text),
+            "doxxing_indicators": self.detect_doxxing_indicators(text),
+            "harassment_keywords": self.detect_harassment_keywords(text),
+            "violence_score": self.get_violence_score(text),
+        }
+
     def preprocess_tweet(self, text: str) -> dict:
         """Preprocess a tweet and extract features.
 
@@ -320,8 +622,14 @@ class PersianNLP:
             - pro_regime_keywords: list of detected pro-regime keywords
             - opposition_keywords: list of detected opposition keywords
             - keyword_score: alignment score
+            - violence_keywords: list of violence incitement keywords
+            - irgc_signals: list of IRGC-related signals
+            - doxxing_indicators: list of doxxing indicators
+            - harassment_keywords: list of harassment keywords
+            - violence_score: violence incitement score (0-1)
         """
         clean_text = self.clean_for_analysis(text)
+        threat_signals = self.get_threat_signals(text)
 
         return {
             "normalized_text": clean_text,
@@ -332,6 +640,7 @@ class PersianNLP:
             "pro_regime_keywords": self.detect_pro_regime_keywords(text),
             "opposition_keywords": self.detect_opposition_keywords(text),
             "keyword_score": self.get_keyword_score(text),
+            **threat_signals,
         }
 
 

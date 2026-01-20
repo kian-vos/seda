@@ -6,226 +6,199 @@
 <h3 align="center">State-linked Entity Detection & Analysis</h3>
 
 <p align="center">
-  <strong>Exposing Iranian regime propaganda networks on Twitter/X</strong>
+  <strong>Exposing Iranian regime propaganda networks on social media</strong>
 </p>
 
 <p align="center">
-  <a href="#mission">Mission</a> •
-  <a href="#detection-methods">Detection Methods</a> •
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#contributing">Contributing</a>
+  <a href="#the-problem">The Problem</a> •
+  <a href="#what-seda-does">What SEDA Does</a> •
+  <a href="#threat-categories">Threat Categories</a> •
+  <a href="#get-started">Get Started</a> •
+  <a href="#join-the-fight">Join the Fight</a>
 </p>
 
 ---
 
-## Mission
+## The Problem
 
-SEDA is an open-source intelligence platform designed to identify and expose Iranian regime-affiliated Twitter accounts that spread state propaganda.
+During the Woman, Life, Freedom movement and other moments of Iranian resistance, a hidden army operates in the shadows of social media.
 
-**Why this matters:**
-- State-sponsored accounts manipulate public discourse during protests and crises
-- Coordinated networks amplify regime narratives while suppressing opposition voices
-- Identifying these accounts helps researchers, journalists, and activists understand information warfare
+**Thousands of accounts** — some automated, some operated by regime loyalists — work around the clock to:
 
-**What SEDA does:**
-- Detects bot-like behavior using 27+ behavioral features
-- Classifies political stance using Persian NLP and keyword analysis
-- Identifies coordination patterns (synchronized posting, hashtag campaigns, amplification networks)
-- Provides a dashboard to explore and export findings
+- **Drown out protesters' voices** with coordinated hashtag campaigns
+- **Spread regime propaganda** disguised as organic public opinion
+- **Identify and doxx activists**, putting lives at risk
+- **Incite violence** against those who speak out
+- **Create the illusion of public support** for a regime that murders its own people
 
----
+These aren't random trolls. They're organized networks — some directly linked to the IRGC (Islamic Revolutionary Guard Corps), others operating through state media, and many hiding behind fake personas.
 
-## Detection Methods
+**They operate with impunity because they're hard to find.**
 
-### 1. Bot Detection (Heuristic Scoring)
-
-SEDA uses behavioral heuristics to score accounts for bot probability:
-
-| Feature Category | Signals |
-|-----------------|---------|
-| **Profile Analysis** | Username digit ratio, bio presence, default avatar, account age |
-| **Posting Patterns** | Hour entropy, night posting (2-6am Iran time), interval regularity |
-| **Content Behavior** | Retweet ratio, duplicate content, hashtag flooding |
-| **Engagement Signals** | Zero engagement ratio, engagement variance |
-
-### 2. Stance Classification
-
-Accounts are classified based on political alignment:
-
-| Stance | Detection Method |
-|--------|-----------------|
-| **Pro-Regime** | Keywords like "رهبر معظم" (Supreme Leader), "محور مقاومت" (Axis of Resistance), regime hashtags |
-| **Anti-Regime** | Keywords like "زن زندگی آزادی" (Woman Life Freedom), "مرگ بر دیکتاتور" (Death to Dictator) |
-| **Neutral/Unknown** | No clear signals or mixed content |
-
-Supports both Persian (فارسی) and English keyword detection.
-
-### 3. Amplifier Detection
-
-Identifies accounts that exist primarily to amplify regime content:
-
-- **Follower Networks**: Accounts following multiple regime seeds
-- **Retweet Behavior**: Disproportionate retweeting of state media
-- **Co-amplification**: Accounts that amplify the same content together
-
-### 4. Coordination Detection
-
-Detects coordinated inauthentic behavior:
-
-| Method | Description |
-|--------|-------------|
-| **Synchronized Posting** | Near-duplicate tweets within short time windows (MinHash LSH) |
-| **Hashtag Campaigns** | Sudden hashtag spikes driven by small account clusters |
-| **Amplification Networks** | Community detection on retweet graphs (Louvain algorithm) |
+Until now.
 
 ---
 
-## Quick Start
+## What SEDA Does
 
-### Prerequisites
+SEDA is an open-source intelligence platform that **identifies, categorizes, and exposes** regime-affiliated accounts.
 
-- Python 3.11+
-- [Apify](https://apify.com) account (free tier: 10K results/month)
-- [Anthropic API key](https://console.anthropic.com) (optional, for LLM classification)
+### Unmask the Networks
 
-### Installation
+SEDA analyzes account behavior, content, and connections to identify:
+
+- **Automated bots** that amplify propaganda 24/7
+- **IRGC-connected accounts** spreading military narratives
+- **State media amplifiers** retweeting official propaganda
+- **Violence inciters** calling for harm against protesters
+- **Doxxers** who expose activists' identities
+- **Coordinated campaigns** that manipulate trending topics
+
+### Understand the Threat
+
+Not all regime accounts are equal. SEDA categorizes threats by severity:
+
+| Threat Level | Description | Risk |
+|--------------|-------------|------|
+| **Violence Inciters** | Call for execution, violence against protesters | CRITICAL |
+| **Doxxers** | Expose opposition identities and personal information | CRITICAL |
+| **IRGC Operatives** | Direct connections to Revolutionary Guard | HIGH |
+| **State Propagandists** | Official media and government accounts | HIGH |
+| **Amplifier Bots** | Automated accounts that spread content | MEDIUM |
+| **Trolls** | Harassment and intimidation campaigns | MEDIUM |
+| **Passive Supporters** | Engage with regime content without inciting | LOW |
+
+### Visualize Connections
+
+See how regime accounts connect and coordinate:
+
+- **Network graphs** showing who amplifies whom
+- **Coordination clusters** revealing synchronized campaigns
+- **Threat breakdowns** showing the composition of regime networks
+
+---
+
+## Why This Matters
+
+### For Researchers
+- Study information warfare tactics in real-time
+- Document regime propaganda for academic research
+- Understand how authoritarian states manipulate social media
+
+### For Journalists
+- Verify whether trending topics are organic or manufactured
+- Identify state-linked accounts before amplifying their content
+- Investigate coordination between regime entities
+
+### For Activists
+- Know who's watching and who's dangerous
+- Understand which accounts incite violence or doxx
+- Protect yourself by understanding the threat landscape
+
+### For Platforms
+- Identify coordinated inauthentic behavior
+- Understand how state actors evade detection
+- Improve content moderation with behavioral signals
+
+---
+
+## Get Started
+
+### Quick Setup
 
 ```bash
-# Clone repository
+# Clone and install
 git clone https://github.com/kian-vos/seda.git
 cd seda
+pip install -e .
 
-# Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install -e ".[dev]"
-
-# Configure environment
+# Configure (get free API keys from Apify)
 cp .env.example .env
-# Edit .env with your API keys
-```
 
-### Basic Usage
-
-```bash
-# 1. Initialize seed accounts
+# Initialize and collect data
 python -m scripts.seed_accounts init
-
-# 2. Collect data from seeds
 python -m scripts.collect seeds --tweets 50
 
-# 3. Expand network (find followers/retweeters)
-python -m scripts.collect followers --all-seeds --max 200
-
-# 4. Run analysis
+# Run analysis
 python -m scripts.analyze all
 
-# 5. Launch dashboard
+# Launch dashboard
 streamlit run dashboard/app.py
 ```
 
-### Dashboard
+### View the Dashboard
 
-Access the dashboard at `http://localhost:8501` to:
-- View identified pro-regime accounts
-- Explore coordination clusters
-- Export data for further analysis
+Open `http://localhost:8501` to explore:
 
----
+- **Overview**: See threat breakdown and key statistics
+- **Accounts**: Search and filter identified regime accounts
+- **Network**: Visualize connections and coordination
+- **Export**: Download data for your own analysis
 
-## Project Structure
-
-```
-seda/
-├── analysis/
-│   ├── bot.py           # Bot detection (heuristic scoring)
-│   ├── stance.py        # Stance classification
-│   ├── coordination.py  # Coordination detection
-│   ├── nlp.py          # Persian NLP processing
-│   └── features.py     # Feature extraction (27 features)
-├── scraper/
-│   └── twitter.py      # Apify Twitter scraper
-├── db.py               # SQLite database
-└── models.py           # Data models
-
-dashboard/
-└── app.py              # Streamlit dashboard
-
-scripts/
-├── collect.py          # Data collection CLI
-├── analyze.py          # Analysis pipeline CLI
-└── seed_accounts.py    # Seed account management
-```
+For detailed technical documentation, see [TECHNICAL.md](TECHNICAL.md).
 
 ---
 
-## Deployment
+## Join the Fight
 
-### Local Development
-Data is stored in `data/seda.db` (SQLite). This works great for local development and research.
+SEDA is open source because **transparency fights propaganda**.
 
-### Streamlit Cloud
-**Important:** Streamlit Cloud uses ephemeral storage. Your database will reset on every deploy/restart.
+### Ways to Contribute
 
-For persistent deployment, you'll need an external database:
-- [Supabase](https://supabase.com) (free PostgreSQL)
-- [PlanetScale](https://planetscale.com) (free MySQL)
-- [Turso](https://turso.tech) (free edge SQLite)
+**No coding required:**
+- **Report accounts**: Know regime-affiliated accounts? Help us add them
+- **Improve keywords**: Suggest Persian/English terms that indicate regime affiliation
+- **Spread the word**: Share SEDA with researchers and journalists
+- **Translate**: Help make SEDA accessible in more languages
 
-Or pre-load exported CSV data on startup.
+**For developers:**
+- Improve detection algorithms
+- Add new analysis capabilities
+- Enhance the dashboard
+- Fix bugs and improve performance
 
----
-
-## Contributing
-
-**We welcome contributions!** This is an open-source project fighting information warfare.
-
-### How to Contribute
-
-1. **Report Issues**: Found a bug or have a suggestion? [Open an issue](https://github.com/kian-vos/seda/issues)
-
-2. **Add Seed Accounts**: Know verified regime-affiliated accounts? Submit a PR to add them
-
-3. **Improve Detection**:
-   - Add new Persian/English keywords for stance detection
-   - Improve bot detection heuristics
-   - Add new coordination detection algorithms
-
-4. **Documentation**: Help improve docs, add examples, translate to Persian
-
-5. **Code Contributions**:
-   ```bash
-   # Fork the repo, then:
-   git checkout -b feature/your-feature
-   # Make changes
-   git commit -m "Add your feature"
-   git push origin feature/your-feature
-   # Open a Pull Request
-   ```
-
-### Guidelines
-
-- Follow existing code style
-- Add tests for new features
-- Update documentation as needed
-- Be respectful in discussions
+See our [Contributing Guide](CONTRIBUTING.md) for details.
 
 ---
 
-## Disclaimer
+## The Bigger Picture
 
-This tool is for research and educational purposes. Users are responsible for complying with Twitter/X Terms of Service and applicable laws. The goal is transparency and accountability, not harassment.
+SEDA is one tool in a larger fight for information freedom.
+
+Every regime account exposed is:
+- One less voice drowning out protesters
+- One less source of manufactured consent
+- One more data point proving coordinated manipulation
+
+**Information warfare is real. Now we can fight back.**
 
 ---
 
-## License
+## Ethics & Responsibility
 
-MIT License - See [LICENSE](LICENSE) for details.
+SEDA is designed for **research, journalism, and accountability** — not harassment.
+
+- We focus on **regime-affiliated accounts**, not individuals' political opinions
+- We **protect opposition voices** by excluding anti-regime accounts from analysis
+- We encourage **responsible disclosure** and ethical use of findings
+- Users must comply with platform terms of service and applicable laws
+
+---
+
+## Acknowledgments
+
+Built for the brave people of Iran who risk everything for freedom.
+
+*"Woman, Life, Freedom"*
+*"زن، زندگی، آزادی"*
 
 ---
 
 <p align="center">
   <strong>For those who fight for freedom.</strong>
+</p>
+
+<p align="center">
+  <a href="TECHNICAL.md">Technical Documentation</a> •
+  <a href="LICENSE">MIT License</a>
 </p>

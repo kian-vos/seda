@@ -61,6 +61,19 @@ class CoordinationType(str, Enum):
     AMPLIFICATION_NETWORK = "amplification_network"
 
 
+class ThreatLevel(str, Enum):
+    """Threat level based on content analysis for pro-regime accounts."""
+
+    VIOLENCE_INCITER = "violence_inciter"      # Calls for violence against protesters
+    DOXXER = "doxxer"                          # Exposes opposition identities
+    IRGC_OPERATIVE = "irgc_operative"          # Direct IRGC connection
+    STATE_PROPAGANDIST = "state_propagandist"  # Official media/accounts
+    AMPLIFIER_BOT = "amplifier_bot"            # Automated amplification
+    TROLL = "troll"                            # Harassment campaigns
+    PASSIVE_SUPPORTER = "passive_supporter"    # Engages but doesn't incite
+    UNKNOWN = "unknown"                        # Not classified
+
+
 class Account(BaseModel):
     """Twitter account model."""
 
@@ -86,6 +99,7 @@ class Account(BaseModel):
     account_type: AccountType = AccountType.UNKNOWN
     political_stance: PoliticalStance = PoliticalStance.UNKNOWN
     political_taxonomy: PoliticalTaxonomy = PoliticalTaxonomy.UNKNOWN
+    threat_level: ThreatLevel = ThreatLevel.UNKNOWN
 
     # Seed tracking
     is_seed: bool = False
@@ -97,6 +111,9 @@ class Account(BaseModel):
 
     # Features (stored as JSON)
     features: Optional[dict] = None
+
+    # Embeddings for semantic analysis (768-dim ParsBERT)
+    embedding: Optional[list[float]] = None
 
 
 class Tweet(BaseModel):
@@ -128,6 +145,9 @@ class Tweet(BaseModel):
     sentiment: Optional[float] = None
     regime_alignment: Optional[float] = None
     talking_points: list[str] = Field(default_factory=list)
+
+    # Embeddings for semantic analysis (768-dim ParsBERT)
+    embedding: Optional[list[float]] = None
 
     collected_at: Optional[datetime] = None
 
@@ -171,5 +191,6 @@ class AnalysisResult(BaseModel):
     bot_score: Optional[float] = None
     stance: Optional[PoliticalStance] = None
     taxonomy: Optional[PoliticalTaxonomy] = None
+    threat_level: Optional[ThreatLevel] = None
     coordination_clusters: list[int] = Field(default_factory=list)
     features: Optional[dict] = None

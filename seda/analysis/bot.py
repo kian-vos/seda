@@ -299,3 +299,329 @@ class BotDetector:
         return self.db.get_all_accounts(
             max_bot_score=max_score, limit=limit
         )
+
+    def explain_prediction(self, account: Account) -> dict:
+        """Explain bot prediction for an account using SHAP values.
+
+        Args:
+            account: Account to explain
+
+        Returns:
+            Dict with prediction explanation including:
+            - is_bot: Whether account is classified as bot
+            - bot_score: Raw bot probability
+            - top_factors: Dict of feature name -> contribution info
+        """
+        # Get features
+        if not account.features:
+            features = self.feature_extractor.extract_features_for_account(account.id)
+        else:
+            features = account.features
+
+        if not features:
+            return {"is_bot": False, "bot_score": 0.5, "top_factors": {}}
+
+        score = self.score_account(account, features)
+        is_bot = score >= self.settings.bot_threshold
+
+        result = {
+            "is_bot": is_bot,
+            "bot_score": score,
+            "top_factors": {},
+        }
+
+        # Try to get SHAP values if model is available
+        if self.model and LIGHTGBM_AVAILABLE:
+            try:
+                import shap
+                feature_vector = np.array([features_to_vector(features)])
+                explainer = shap.TreeExplainer(self.model)
+                shap_values = explainer.shap_values(feature_vector)
+
+                # Map SHAP values to feature names
+                for i, name in enumerate(FEATURE_NAMES):
+                    if i < len(shap_values[0]):
+                        result["top_factors"][name] = {
+                            "value": features.get(name, 0),
+                            "shap_value": float(shap_values[0][i]),
+                            "importance": abs(float(shap_values[0][i])),
+                        }
+
+                # Sort by importance and keep top 10
+                sorted_factors = dict(
+                    sorted(
+                        result["top_factors"].items(),
+                        key=lambda x: x[1]["importance"],
+                        reverse=True
+                    )[:10]
+                )
+                result["top_factors"] = sorted_factors
+
+            except ImportError:
+                # SHAP not available, use heuristic explanation
+                result["top_factors"] = self._heuristic_explanation(features)
+            except Exception:
+                result["top_factors"] = self._heuristic_explanation(features)
+        else:
+            result["top_factors"] = self._heuristic_explanation(features)
+
+        return result
+
+    def _heuristic_explanation(self, features: dict) -> dict:
+        """Generate explanation based on heuristic rules.
+
+        Args:
+            features: Account features
+
+        Returns:
+            Dict of feature -> explanation info
+        """
+        explanations = {}
+
+        # High impact features
+        if features.get("username_digit_ratio", 0) > 0.3:
+            explanations["username_digit_ratio"] = {
+                "value": features.get("username_digit_ratio", 0),
+                "importance": 0.3,
+                "reason": "Many digits in username (bot-like pattern)",
+            }
+
+        if features.get("retweet_ratio", 0) > 0.7:
+            explanations["retweet_ratio"] = {
+                "value": features.get("retweet_ratio", 0),
+                "importance": 0.25,
+                "reason": "High retweet ratio (amplifier behavior)",
+            }
+
+        if features.get("hour_entropy", 3) < 2:
+            explanations["hour_entropy"] = {
+                "value": features.get("hour_entropy", 3),
+                "importance": 0.2,
+                "reason": "Low posting hour diversity (automated)",
+            }
+
+        if not features.get("has_bio", 1):
+            explanations["has_bio"] = {
+                "value": 0,
+                "importance": 0.15,
+                "reason": "No bio (incomplete profile)",
+            }
+
+        if features.get("has_default_avatar", 0):
+            explanations["has_default_avatar"] = {
+                "value": 1,
+                "importance": 0.15,
+                "reason": "Default avatar (minimal effort profile)",
+            }
+
+        if features.get("account_age_days", 365) < 30:
+            explanations["account_age_days"] = {
+                "value": features.get("account_age_days", 365),
+                "importance": 0.2,
+                "reason": "Very new account",
+            }
+
+        if features.get("zero_engagement_ratio", 0) > 0.8:
+            explanations["zero_engagement_ratio"] = {
+                "value": features.get("zero_engagement_ratio", 0),
+                "importance": 0.15,
+                "reason": "Most tweets get zero engagement",
+            }
+
+        return explanations
+
+    def create_weak_labels(self) -> tuple[list[int], list[int]]:
+        """Create weak supervision labels for training.
+
+        Uses heuristics to identify likely bots and likely humans
+        without manual labeling.
+
+        Returns:
+            Tuple of (positive_ids, negative_ids) for bot/human labels
+        """
+        all_accounts = self.db.get_all_accounts()
+        positive_ids = []  # Likely bots
+        negative_ids = []  # Likely humans
+
+        for account in all_accounts:
+            if not account.id or not account.features:
+                continue
+
+            features = account.features
+
+            # Strong bot signals (positive labels)
+            bot_signals = 0
+
+            # High retweet ratio (>95%)
+            if features.get("retweet_ratio", 0) > 0.95:
+                bot_signals += 2
+
+            # New account with many tweets
+            if (features.get("account_age_days", 365) < 30 and
+                account.tweet_count > 1000):
+                bot_signals += 2
+
+            # In detected coordination cluster
+            if account.coordination_score and account.coordination_score > 0.7:
+                bot_signals += 1
+
+            # Very high digit ratio in username
+            if features.get("username_digit_ratio", 0) > 0.6:
+                bot_signals += 1
+
+            # Low hour entropy (automated posting)
+            if features.get("hour_entropy", 3) < 1.5:
+                bot_signals += 1
+
+            # High periodicity score
+            if features.get("periodicity_score", 0) > 0.7:
+                bot_signals += 1
+
+            # No bio and default avatar
+            if not features.get("has_bio", 1) and features.get("has_default_avatar", 0):
+                bot_signals += 1
+
+            if bot_signals >= 3:
+                positive_ids.append(account.id)
+                continue
+
+            # Strong human signals (negative labels)
+            human_signals = 0
+
+            # Verified account
+            if account.is_verified:
+                human_signals += 3
+
+            # Old account with moderate activity
+            if (features.get("account_age_days", 0) > 365 * 2 and
+                features.get("tweet_rate", 0) < 20):
+                human_signals += 2
+
+            # Varied content (low retweet ratio)
+            if features.get("retweet_ratio", 0) < 0.3:
+                human_signals += 1
+
+            # Has real bio
+            if features.get("has_bio", 0) and features.get("bio_length", 0) > 50:
+                human_signals += 1
+
+            # Good follower ratio
+            ratio = features.get("follower_following_ratio", 0)
+            if 0.1 < ratio < 10:
+                human_signals += 1
+
+            # High hour entropy (natural posting)
+            if features.get("hour_entropy", 0) > 3:
+                human_signals += 1
+
+            # Gets engagement
+            if features.get("zero_engagement_ratio", 1) < 0.3:
+                human_signals += 1
+
+            if human_signals >= 3:
+                negative_ids.append(account.id)
+
+        return positive_ids, negative_ids
+
+    def train_from_weak_labels(self, params: Optional[dict] = None) -> Optional[dict]:
+        """Train model using automatically generated weak labels.
+
+        Args:
+            params: LightGBM parameters (optional)
+
+        Returns:
+            Training metrics or None if training failed
+        """
+        positive_ids, negative_ids = self.create_weak_labels()
+
+        if len(positive_ids) < 5 or len(negative_ids) < 5:
+            return None  # Not enough data
+
+        return self.train_model(positive_ids, negative_ids, params)
+
+    def get_feature_importance(self) -> dict[str, float]:
+        """Get feature importance from trained model.
+
+        Returns:
+            Dict mapping feature name to importance score
+        """
+        if not self.model or not LIGHTGBM_AVAILABLE:
+            return {}
+
+        importances = self.model.feature_importance(importance_type='gain')
+
+        return {
+            name: float(imp)
+            for name, imp in zip(FEATURE_NAMES, importances)
+        }
+
+    def cross_validate(
+        self,
+        positive_ids: list[int],
+        negative_ids: list[int],
+        n_folds: int = 5,
+    ) -> dict:
+        """Perform cross-validation on training data.
+
+        Args:
+            positive_ids: Account IDs labeled as bots
+            negative_ids: Account IDs labeled as humans
+            n_folds: Number of CV folds
+
+        Returns:
+            Dict with CV metrics (mean AUC, std, per-fold scores)
+        """
+        if not LIGHTGBM_AVAILABLE:
+            return {}
+
+        try:
+            from sklearn.model_selection import cross_val_score
+            from sklearn.metrics import make_scorer, roc_auc_score
+        except ImportError:
+            return {}
+
+        # Collect features
+        X = []
+        y = []
+
+        for account_id in positive_ids:
+            account = self.db.get_account(account_id)
+            if account and account.features:
+                X.append(features_to_vector(account.features))
+                y.append(1)
+
+        for account_id in negative_ids:
+            account = self.db.get_account(account_id)
+            if account and account.features:
+                X.append(features_to_vector(account.features))
+                y.append(0)
+
+        if len(X) < n_folds * 2:
+            return {"error": "Not enough data for cross-validation"}
+
+        X = np.array(X)
+        y = np.array(y)
+
+        # Create LightGBM classifier
+        classifier = lgb.LGBMClassifier(
+            objective='binary',
+            num_leaves=31,
+            learning_rate=0.05,
+            verbose=-1,
+        )
+
+        # Run CV
+        scores = cross_val_score(
+            classifier, X, y,
+            cv=n_folds,
+            scoring='roc_auc'
+        )
+
+        return {
+            "mean_auc": float(np.mean(scores)),
+            "std_auc": float(np.std(scores)),
+            "fold_scores": scores.tolist(),
+            "n_samples": len(y),
+            "n_positive": sum(y),
+            "n_negative": len(y) - sum(y),
+        }

@@ -24,6 +24,7 @@ from seda.models import (
     PoliticalTaxonomy,
     SeedAccount,
     SeedCategory,
+    ThreatLevel,
     Tweet,
 )
 
@@ -48,16 +49,19 @@ CREATE TABLE IF NOT EXISTS accounts (
     account_type TEXT DEFAULT 'unknown',
     political_stance TEXT DEFAULT 'unknown',
     political_taxonomy TEXT DEFAULT 'unknown',
+    threat_level TEXT DEFAULT 'unknown',
     is_seed BOOLEAN DEFAULT FALSE,
     seed_category TEXT,
     first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    features TEXT
+    features TEXT,
+    embedding BLOB
 );
 
 CREATE INDEX IF NOT EXISTS idx_accounts_username ON accounts(username);
 CREATE INDEX IF NOT EXISTS idx_accounts_bot_score ON accounts(bot_score);
 CREATE INDEX IF NOT EXISTS idx_accounts_political_stance ON accounts(political_stance);
+CREATE INDEX IF NOT EXISTS idx_accounts_threat_level ON accounts(threat_level);
 CREATE INDEX IF NOT EXISTS idx_accounts_is_seed ON accounts(is_seed);
 
 -- Tweets table
@@ -80,6 +84,7 @@ CREATE TABLE IF NOT EXISTS tweets (
     sentiment REAL,
     regime_alignment REAL,
     talking_points TEXT DEFAULT '[]',
+    embedding BLOB,
     collected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (account_id) REFERENCES accounts(id)
 );
@@ -243,8 +248,40 @@ class Database:
                         except Exception:
                             pass  # Ignore errors for CREATE IF NOT EXISTS
                 conn.commit()
+                # Run migrations to add new columns to existing tables
+                self._run_migrations(conn)
             else:
                 conn.executescript(SCHEMA)
+                # Run migrations for local SQLite too
+                self._run_migrations(conn)
+
+    def _run_migrations(self, conn) -> None:
+        """Add new columns to existing tables if they don't exist."""
+        # Migration: Add threat_level column to accounts table
+        migrations = [
+            # (table, column, column_definition)
+            ("accounts", "threat_level", "TEXT DEFAULT 'unknown'"),
+            ("accounts", "embedding", "BLOB"),
+            ("tweets", "embedding", "BLOB"),
+        ]
+
+        for table, column, definition in migrations:
+            try:
+                # Check if column exists by trying to select it
+                conn.execute(f"SELECT {column} FROM {table} LIMIT 1")
+            except Exception:
+                # Column doesn't exist, add it
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                    print(f"Migration: Added {column} column to {table} table")
+                except Exception as e:
+                    # May fail if column already exists in some edge case
+                    print(f"Migration note: Could not add {column} to {table}: {e}")
+
+        try:
+            conn.commit()
+        except Exception:
+            pass  # May already be committed
 
     @contextmanager
     def connection(self) -> Generator[Any, None, None]:
@@ -430,6 +467,7 @@ class Database:
         account_type: Optional[AccountType] = None,
         political_stance: Optional[PoliticalStance] = None,
         political_taxonomy: Optional[PoliticalTaxonomy] = None,
+        threat_level: Optional[ThreatLevel] = None,
     ) -> None:
         """Update classification for an account."""
         updates = []
@@ -444,6 +482,9 @@ class Database:
         if political_taxonomy is not None:
             updates.append("political_taxonomy = ?")
             params.append(political_taxonomy.value)
+        if threat_level is not None:
+            updates.append("threat_level = ?")
+            params.append(threat_level.value)
 
         if not updates:
             return
@@ -465,6 +506,68 @@ class Database:
                 (json.dumps(features), account_id),
             )
 
+    def update_account_embedding(self, account_id: int, embedding: list[float]) -> None:
+        """Update embedding for an account.
+
+        Args:
+            account_id: Account ID to update
+            embedding: List of floats (768-dim for ParsBERT)
+        """
+        import struct
+        embedding_bytes = struct.pack(f'{len(embedding)}f', *embedding)
+
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE accounts SET embedding = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?",
+                (embedding_bytes, account_id),
+            )
+
+    def update_tweet_embedding(self, tweet_id: int, embedding: list[float]) -> None:
+        """Update embedding for a tweet.
+
+        Args:
+            tweet_id: Tweet ID to update
+            embedding: List of floats (768-dim for ParsBERT)
+        """
+        import struct
+        embedding_bytes = struct.pack(f'{len(embedding)}f', *embedding)
+
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE tweets SET embedding = ? WHERE id = ?",
+                (embedding_bytes, tweet_id),
+            )
+
+    def get_accounts_by_threat_level(
+        self,
+        threat_level: ThreatLevel,
+        limit: Optional[int] = None,
+    ) -> list[Account]:
+        """Get accounts with a specific threat level."""
+        query = "SELECT * FROM accounts WHERE threat_level = ?"
+        params: list = [threat_level.value]
+
+        if limit:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        with self.connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+            return [self._row_to_account(row) for row in rows]
+
+    def get_threat_level_stats(self) -> dict[str, int]:
+        """Get count of accounts for each threat level."""
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT threat_level, COUNT(*) as count
+                FROM accounts
+                WHERE political_stance = 'pro_regime'
+                GROUP BY threat_level
+                """
+            ).fetchall()
+            return {row["threat_level"]: row["count"] for row in rows}
+
     def count_accounts(self) -> int:
         """Count total accounts."""
         with self.connection() as conn:
@@ -473,6 +576,25 @@ class Database:
 
     def _row_to_account(self, row: sqlite3.Row) -> Account:
         """Convert database row to Account model."""
+        # Handle embedding - stored as BLOB, convert to list if present
+        embedding = None
+        try:
+            embedding_bytes = row["embedding"] if "embedding" in row.keys() else None
+            if embedding_bytes:
+                import struct
+                # Unpack 768 floats (768 * 4 bytes)
+                num_floats = len(embedding_bytes) // 4
+                embedding = list(struct.unpack(f'{num_floats}f', embedding_bytes))
+        except (KeyError, TypeError):
+            embedding = None
+
+        # Handle threat_level - may not exist in older databases
+        try:
+            threat_level_val = row["threat_level"] if "threat_level" in row.keys() else None
+            threat_level = ThreatLevel(threat_level_val) if threat_level_val else ThreatLevel.UNKNOWN
+        except (KeyError, ValueError):
+            threat_level = ThreatLevel.UNKNOWN
+
         return Account(
             id=row["id"],
             twitter_id=row["twitter_id"],
@@ -492,11 +614,13 @@ class Database:
             account_type=AccountType(row["account_type"]) if row["account_type"] else AccountType.UNKNOWN,
             political_stance=PoliticalStance(row["political_stance"]) if row["political_stance"] else PoliticalStance.UNKNOWN,
             political_taxonomy=PoliticalTaxonomy(row["political_taxonomy"]) if row["political_taxonomy"] else PoliticalTaxonomy.UNKNOWN,
+            threat_level=threat_level,
             is_seed=bool(row["is_seed"]),
             seed_category=SeedCategory(row["seed_category"]) if row["seed_category"] else None,
             first_seen=datetime.fromisoformat(row["first_seen"]) if row["first_seen"] else None,
             last_updated=datetime.fromisoformat(row["last_updated"]) if row["last_updated"] else None,
             features=json.loads(row["features"]) if row["features"] else None,
+            embedding=embedding,
         )
 
     # Tweet operations
@@ -667,6 +791,17 @@ class Database:
 
     def _row_to_tweet(self, row: sqlite3.Row) -> Tweet:
         """Convert database row to Tweet model."""
+        # Handle embedding - stored as BLOB, convert to list if present
+        embedding = None
+        try:
+            embedding_bytes = row["embedding"] if "embedding" in row.keys() else None
+            if embedding_bytes:
+                import struct
+                num_floats = len(embedding_bytes) // 4
+                embedding = list(struct.unpack(f'{num_floats}f', embedding_bytes))
+        except (KeyError, TypeError):
+            embedding = None
+
         return Tweet(
             id=row["id"],
             tweet_id=row["tweet_id"],
@@ -686,6 +821,7 @@ class Database:
             sentiment=row["sentiment"],
             regime_alignment=row["regime_alignment"],
             talking_points=json.loads(row["talking_points"]) if row["talking_points"] else [],
+            embedding=embedding,
             collected_at=datetime.fromisoformat(row["collected_at"]) if row["collected_at"] else None,
         )
 
