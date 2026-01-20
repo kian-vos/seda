@@ -174,6 +174,52 @@ st.markdown("""
     p, span, div {
         color: #d0d0d0;
     }
+
+    /* Sidebar collapse button - make it more visible */
+    button[data-testid="stSidebarCollapseButton"],
+    button[data-testid="collapsedControl"] {
+        background: linear-gradient(135deg, #dc143c 0%, #8b0000 100%) !important;
+        border: 2px solid #ff4444 !important;
+        border-radius: 8px !important;
+        width: 48px !important;
+        height: 48px !important;
+        min-width: 48px !important;
+        min-height: 48px !important;
+    }
+
+    button[data-testid="stSidebarCollapseButton"] svg,
+    button[data-testid="collapsedControl"] svg {
+        width: 28px !important;
+        height: 28px !important;
+        stroke: white !important;
+        stroke-width: 3px !important;
+    }
+
+    button[data-testid="stSidebarCollapseButton"]:hover,
+    button[data-testid="collapsedControl"]:hover {
+        background: linear-gradient(135deg, #ff4444 0%, #dc143c 100%) !important;
+        box-shadow: 0 0 20px rgba(220, 20, 60, 0.7) !important;
+        transform: scale(1.1) !important;
+    }
+
+    /* Mobile: make expand button even bigger */
+    @media (max-width: 768px) {
+        button[data-testid="collapsedControl"] {
+            width: 60px !important;
+            height: 60px !important;
+            min-width: 60px !important;
+            min-height: 60px !important;
+            position: fixed !important;
+            top: 10px !important;
+            left: 10px !important;
+            z-index: 9999 !important;
+        }
+
+        button[data-testid="collapsedControl"] svg {
+            width: 36px !important;
+            height: 36px !important;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 
