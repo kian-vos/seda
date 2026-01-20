@@ -179,12 +179,15 @@ class TursoConnectionWrapper:
         self._conn = conn
 
     def execute(self, sql: str, params: tuple = ()) -> TursoCursorWrapper:
-        cursor = self._conn.execute(sql, params)
+        if params:
+            cursor = self._conn.execute(sql, list(params))
+        else:
+            cursor = self._conn.execute(sql)
         return TursoCursorWrapper(cursor)
 
     def executemany(self, sql: str, params_list: list) -> None:
         for params in params_list:
-            self._conn.execute(sql, params)
+            self._conn.execute(sql, list(params))
 
     def executescript(self, script: str) -> None:
         for statement in script.split(';'):
