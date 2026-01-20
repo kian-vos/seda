@@ -221,49 +221,80 @@ st.markdown("""
         }
     }
 
-    /* Sidebar navigation buttons */
+    /* Sidebar navigation buttons - rugged military style */
     section[data-testid="stSidebar"] .stButton > button {
-        margin: 4px 0;
-        padding: 12px 16px;
-        border-radius: 8px;
-        font-size: 0.95em;
-        text-align: left;
-        transition: all 0.2s ease;
+        margin: 6px 0 !important;
+        padding: 14px 20px !important;
+        border-radius: 4px !important;
+        font-size: 1em !important;
+        font-weight: 600 !important;
+        letter-spacing: 1px !important;
+        text-transform: uppercase !important;
+        transition: all 0.2s ease !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
     }
 
     section[data-testid="stSidebar"] .stButton > button[kind="secondary"] {
-        background: rgba(139, 0, 0, 0.2);
-        border: 1px solid #8b0000;
-        color: #ffcccc;
+        background: linear-gradient(180deg, #2a1010 0%, #1a0808 100%) !important;
+        border: 2px solid #5c1a1a !important;
+        border-left: 4px solid #8b0000 !important;
+        color: #ffffff !important;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5) !important;
     }
 
     section[data-testid="stSidebar"] .stButton > button[kind="secondary"]:hover {
-        background: rgba(220, 20, 60, 0.3);
-        border-color: #dc143c;
-        color: white;
+        background: linear-gradient(180deg, #3d1515 0%, #2a0a0a 100%) !important;
+        border-color: #8b0000 !important;
+        border-left-color: #dc143c !important;
+        color: #ffffff !important;
+        transform: translateX(4px) !important;
+        box-shadow: 0 4px 12px rgba(139, 0, 0, 0.4) !important;
     }
 
     section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #8b0000 0%, #dc143c 100%);
-        border: 2px solid #ff4444;
-        color: white;
-        font-weight: bold;
+        background: linear-gradient(180deg, #8b0000 0%, #5c0000 100%) !important;
+        border: 2px solid #dc143c !important;
+        border-left: 4px solid #ff4444 !important;
+        color: #ffffff !important;
+        font-weight: 700 !important;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7) !important;
+        box-shadow: 0 4px 12px rgba(139, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
     }
 
-    /* Home button styling */
+    section[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+        background: linear-gradient(180deg, #a00000 0%, #6c0000 100%) !important;
+        box-shadow: 0 6px 16px rgba(220, 20, 60, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+    }
+
+    /* Home button styling - more subtle */
     section[data-testid="stSidebar"] button[data-testid*="logo_home"],
     section[data-testid="stSidebar"] button[data-testid*="text_home"] {
-        background: transparent !important;
-        border: 1px dashed #8b0000 !important;
-        color: #ff6b6b !important;
+        background: linear-gradient(180deg, #1a0808 0%, #0d0404 100%) !important;
+        border: 1px solid #5c1a1a !important;
+        border-left: 3px solid #dc143c !important;
+        color: #ff8888 !important;
         font-size: 0.85em !important;
-        padding: 8px !important;
+        padding: 10px 16px !important;
+        text-transform: none !important;
+        letter-spacing: 0.5px !important;
     }
 
     section[data-testid="stSidebar"] button[data-testid*="logo_home"]:hover,
     section[data-testid="stSidebar"] button[data-testid*="text_home"]:hover {
-        background: rgba(220, 20, 60, 0.2) !important;
-        border-style: solid !important;
+        background: linear-gradient(180deg, #2a1010 0%, #1a0808 100%) !important;
+        border-color: #8b0000 !important;
+        color: #ffffff !important;
+    }
+
+    /* Navigation section header */
+    section[data-testid="stSidebar"] h3 {
+        color: #ff6b6b !important;
+        font-size: 0.75em !important;
+        text-transform: uppercase !important;
+        letter-spacing: 3px !important;
+        margin-bottom: 12px !important;
+        padding-bottom: 8px !important;
+        border-bottom: 1px solid #5c1a1a !important;
     }
 </style>
 """, unsafe_allow_html=True)
