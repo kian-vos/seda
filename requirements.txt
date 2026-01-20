@@ -1,0 +1,11 @@
+streamlit>=1.30
+pandas>=2.0
+plotly>=5.18
+numpy>=1.24
+pydantic>=2.0
+pydantic-settings>=2.0
+python-dotenv>=1.0
+libsql-experimental>=0.0.47
+networkx>=3.0
+python-louvain>=0.16
+datasketch>=1.6
