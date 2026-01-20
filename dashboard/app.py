@@ -207,11 +207,20 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # Navigation
+    # Navigation - use session state for programmatic navigation
+    nav_options = ["Overview", "Accounts", "Coordination", "Network", "Export"]
+    default_page = st.session_state.get("page", "Overview")
+    default_index = nav_options.index(default_page) if default_page in nav_options else 0
+
     page = st.sidebar.radio(
         "Navigate",
-        ["Overview", "Accounts", "Coordination", "Network", "Export"],
+        nav_options,
+        index=default_index,
+        key="nav_radio"
     )
+
+    # Update session state when radio changes
+    st.session_state["page"] = page
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("""
@@ -344,7 +353,8 @@ def show_home():
                 clicked_stance = selected.selection.points[0].get("x")
                 if clicked_stance:
                     st.session_state["filter_stance"] = clicked_stance
-                    st.switch_page_workaround = clicked_stance
+                    st.session_state["page"] = "Accounts"
+                    st.rerun()
         else:
             st.info("No accounts in database yet.")
 
@@ -356,21 +366,25 @@ def show_home():
     with col1:
         if st.button(f"Pro-Regime ({len(pro_regime)})", use_container_width=True, type="primary"):
             st.session_state["filter_stance"] = "pro_regime"
+            st.session_state["page"] = "Accounts"
+            st.rerun()
     with col2:
         anti_regime = [a for a in accounts if a.political_stance == PoliticalStance.ANTI_REGIME]
         if st.button(f"Anti-Regime ({len(anti_regime)})", use_container_width=True):
             st.session_state["filter_stance"] = "anti_regime"
+            st.session_state["page"] = "Accounts"
+            st.rerun()
     with col3:
         if st.button(f"Suspected Bots ({len(high_bot)})", use_container_width=True):
             st.session_state["filter_min_bot"] = 0.7
+            st.session_state["page"] = "Accounts"
+            st.rerun()
     with col4:
         if st.button("View All Accounts", use_container_width=True):
             st.session_state["filter_stance"] = None
             st.session_state["filter_min_bot"] = None
-
-    # Show message if filter was set
-    if st.session_state.get("filter_stance") or st.session_state.get("filter_min_bot"):
-        st.info("Go to **Accounts** page in the sidebar to see filtered results.")
+            st.session_state["page"] = "Accounts"
+            st.rerun()
 
 
 def show_accounts():
