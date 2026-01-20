@@ -207,20 +207,21 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # Navigation - use session state for programmatic navigation
+    # Navigation - check if we need to override from button click
     nav_options = ["Overview", "Accounts", "Coordination", "Network", "Export"]
-    default_page = st.session_state.get("page", "Overview")
-    default_index = nav_options.index(default_page) if default_page in nav_options else 0
 
-    page = st.sidebar.radio(
-        "Navigate",
-        nav_options,
-        index=default_index,
-        key="nav_radio"
-    )
+    # If a button set the page, use that; otherwise use radio selection
+    if "navigate_to" in st.session_state:
+        page = st.session_state.pop("navigate_to")
+    else:
+        page = st.sidebar.radio(
+            "Navigate",
+            nav_options,
+        )
 
-    # Update session state when radio changes
-    st.session_state["page"] = page
+    # Show current page indicator if navigated programmatically
+    if page != "Overview":
+        st.sidebar.markdown(f"**Currently viewing: {page}**")
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("""
@@ -348,12 +349,12 @@ def show_home():
             )
             selected = st.plotly_chart(fig, use_container_width=True, on_select="rerun", key="stance_chart")
 
-            # Handle chart click to navigate to accounts
+            # Handle chart click to navigate to accounts (only for pro_regime)
             if selected and selected.selection and selected.selection.points:
                 clicked_stance = selected.selection.points[0].get("x")
-                if clicked_stance:
+                if clicked_stance and clicked_stance != "anti_regime":
                     st.session_state["filter_stance"] = clicked_stance
-                    st.session_state["page"] = "Accounts"
+                    st.session_state["navigate_to"] = "Accounts"
                     st.rerun()
         else:
             st.info("No accounts in database yet.")
@@ -362,28 +363,22 @@ def show_home():
     st.markdown("---")
     st.markdown("### Browse Accounts")
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     with col1:
         if st.button(f"Pro-Regime ({len(pro_regime)})", use_container_width=True, type="primary"):
             st.session_state["filter_stance"] = "pro_regime"
-            st.session_state["page"] = "Accounts"
+            st.session_state["navigate_to"] = "Accounts"
             st.rerun()
     with col2:
-        anti_regime = [a for a in accounts if a.political_stance == PoliticalStance.ANTI_REGIME]
-        if st.button(f"Anti-Regime ({len(anti_regime)})", use_container_width=True):
-            st.session_state["filter_stance"] = "anti_regime"
-            st.session_state["page"] = "Accounts"
-            st.rerun()
-    with col3:
         if st.button(f"Suspected Bots ({len(high_bot)})", use_container_width=True):
             st.session_state["filter_min_bot"] = 0.7
-            st.session_state["page"] = "Accounts"
+            st.session_state["navigate_to"] = "Accounts"
             st.rerun()
-    with col4:
+    with col3:
         if st.button("View All Accounts", use_container_width=True):
             st.session_state["filter_stance"] = None
             st.session_state["filter_min_bot"] = None
-            st.session_state["page"] = "Accounts"
+            st.session_state["navigate_to"] = "Accounts"
             st.rerun()
 
 
@@ -401,8 +396,8 @@ def show_accounts():
     if "filter_min_bot" in st.session_state:
         del st.session_state["filter_min_bot"]
 
-    # Map stance value to index for selectbox
-    stance_options = ["All", "pro_regime", "anti_regime", "neutral", "unknown"]
+    # Map stance value to index for selectbox (exclude anti_regime to protect opposition)
+    stance_options = ["All", "pro_regime", "neutral", "unknown"]
     stance_index = stance_options.index(default_stance) if default_stance in stance_options else 0
 
     # Filters
@@ -872,7 +867,7 @@ def show_export():
     with col1:
         stance_filter = st.selectbox(
             "Stance",
-            ["All", "pro_regime", "anti_regime", "neutral", "unknown"],
+            ["All", "pro_regime", "neutral", "unknown"],
         )
 
     with col2:
