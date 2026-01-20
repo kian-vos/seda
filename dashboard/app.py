@@ -220,6 +220,51 @@ st.markdown("""
             height: 36px !important;
         }
     }
+
+    /* Sidebar navigation buttons */
+    section[data-testid="stSidebar"] .stButton > button {
+        margin: 4px 0;
+        padding: 12px 16px;
+        border-radius: 8px;
+        font-size: 0.95em;
+        text-align: left;
+        transition: all 0.2s ease;
+    }
+
+    section[data-testid="stSidebar"] .stButton > button[kind="secondary"] {
+        background: rgba(139, 0, 0, 0.2);
+        border: 1px solid #8b0000;
+        color: #ffcccc;
+    }
+
+    section[data-testid="stSidebar"] .stButton > button[kind="secondary"]:hover {
+        background: rgba(220, 20, 60, 0.3);
+        border-color: #dc143c;
+        color: white;
+    }
+
+    section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #8b0000 0%, #dc143c 100%);
+        border: 2px solid #ff4444;
+        color: white;
+        font-weight: bold;
+    }
+
+    /* Home button styling */
+    section[data-testid="stSidebar"] button[data-testid*="logo_home"],
+    section[data-testid="stSidebar"] button[data-testid*="text_home"] {
+        background: transparent !important;
+        border: 1px dashed #8b0000 !important;
+        color: #ff6b6b !important;
+        font-size: 0.85em !important;
+        padding: 8px !important;
+    }
+
+    section[data-testid="stSidebar"] button[data-testid*="logo_home"]:hover,
+    section[data-testid="stSidebar"] button[data-testid*="text_home"]:hover {
+        background: rgba(220, 20, 60, 0.2) !important;
+        border-style: solid !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -233,18 +278,65 @@ db = init_db()
 
 def main():
     """Main dashboard application."""
-    # Sidebar with logo
+    # Initialize current page in session state
+    if "current_page" not in st.session_state:
+        st.session_state.current_page = "Overview"
+
+    # Handle navigation from buttons (e.g., from Overview page)
+    if "navigate_to" in st.session_state:
+        st.session_state.current_page = st.session_state.pop("navigate_to")
+
+    # Sidebar with clickable logo
     logo_b64 = get_logo_base64()
     if logo_b64:
         st.sidebar.markdown(f"""
-        <div style="text-align: center; padding: 0 0 10px 0;">
-            <img src="data:image/png;base64,{logo_b64}" style="height: 210px; width: auto;">
+        <div style="text-align: center; padding: 0 0 10px 0; cursor: pointer;" onclick="window.location.reload();">
+            <img src="data:image/png;base64,{logo_b64}" style="height: 180px; width: auto;">
             <p style="color: #9CA3AF; font-size: 0.85em; margin: 5px 0 0 0;">State-linked Entity Detection & Analysis</p>
         </div>
         """, unsafe_allow_html=True)
+        # Add actual clickable button for home (hidden visually but functional)
+        if st.sidebar.button("Home", key="logo_home", use_container_width=True, type="secondary"):
+            st.session_state.current_page = "Overview"
+            # Clear any filters
+            for key in ["filter_stance", "filter_min_bot", "filter_threat_level"]:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
     else:
-        st.sidebar.markdown("# SEDA")
+        if st.sidebar.button("SEDA", key="text_home", use_container_width=True):
+            st.session_state.current_page = "Overview"
+            st.rerun()
         st.sidebar.markdown("**State-linked Entity Detection & Analysis**")
+
+    st.sidebar.markdown("---")
+
+    # Styled navigation buttons
+    st.sidebar.markdown("### Navigation")
+
+    nav_items = [
+        ("Overview", "Dashboard overview and statistics"),
+        ("Accounts", "Search and browse accounts"),
+        ("Coordination", "Coordinated behavior clusters"),
+        ("Network", "Network visualizations"),
+        ("Export", "Download data"),
+    ]
+
+    for nav_name, nav_desc in nav_items:
+        # Highlight current page
+        is_current = st.session_state.current_page == nav_name
+        button_type = "primary" if is_current else "secondary"
+
+        if st.sidebar.button(
+            f"{'> ' if is_current else ''}{nav_name}",
+            key=f"nav_{nav_name}",
+            use_container_width=True,
+            type=button_type,
+            help=nav_desc,
+        ):
+            st.session_state.current_page = nav_name
+            st.rerun()
+
     st.sidebar.markdown("---")
     st.sidebar.markdown("""
     <div class="mission-text">
@@ -253,28 +345,15 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # Navigation - check if we need to override from button click
-    nav_options = ["Overview", "Accounts", "Coordination", "Network", "Export"]
-
-    # If a button set the page, use that; otherwise use radio selection
-    if "navigate_to" in st.session_state:
-        page = st.session_state.pop("navigate_to")
-    else:
-        page = st.sidebar.radio(
-            "Navigate",
-            nav_options,
-        )
-
-    # Show current page indicator if navigated programmatically
-    if page != "Overview":
-        st.sidebar.markdown(f"**Currently viewing: {page}**")
-
     st.sidebar.markdown("---")
     st.sidebar.markdown("""
     **Remember:**
     Every account exposed is a victory
     for truth and freedom.
     """)
+
+    # Get current page
+    page = st.session_state.current_page
 
     if page == "Overview":
         show_home()
@@ -478,6 +557,7 @@ def show_home():
                     with col_name:
                         if st.button(info["name"], key=f"threat_{level}", use_container_width=True):
                             st.session_state["filter_threat_level"] = level
+                            st.session_state["filter_stance"] = "pro_regime"  # All threats are pro-regime
                             st.session_state["navigate_to"] = "Accounts"
                             st.rerun()
                     with col_count:
