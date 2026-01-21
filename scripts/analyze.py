@@ -79,6 +79,7 @@ def stance(
     limit: int = typer.Option(None, "--limit", "-l", help="Limit accounts to classify"),
     llm: bool = typer.Option(False, "--llm", help="Use LLM for classification (costs API credits)"),
     force: bool = typer.Option(False, "--force", "-f", help="Reclassify existing stances"),
+    skip_inactive: int = typer.Option(180, "--skip-inactive", help="Skip accounts inactive for this many days (0=include all)"),
 ):
     """Run stance classification."""
     classifier = StanceClassifier()
@@ -87,7 +88,8 @@ def stance(
         console.print("[red]Anthropic API key not configured[/red]")
         raise typer.Exit(1)
 
-    classified = classifier.classify_all_accounts(use_llm=llm)
+    console.print(f"[blue]Classifying accounts (skipping inactive >{skip_inactive} days)...[/blue]")
+    classified = classifier.classify_all_accounts(use_llm=llm, skip_inactive_days=skip_inactive)
     console.print(f"[green]Classified {classified} accounts[/green]")
 
     # Show distribution

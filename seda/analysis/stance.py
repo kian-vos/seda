@@ -245,14 +245,18 @@ class StanceClassifier:
         if account.political_stance != PoliticalStance.PRO_REGIME:
             return ThreatLevel.UNKNOWN
 
-        # Check if known IRGC media account
+        # PRIORITY 1: Seed accounts with known categories take precedence
+        # State media/official accounts are propagandists, not operatives
+        # (They report on IRGC but aren't IRGC themselves)
+        if account.is_seed and account.seed_category:
+            if account.seed_category.value in ["official_state", "state_media"]:
+                return ThreatLevel.STATE_PROPAGANDIST
+            if account.seed_category.value == "irgc_linked":
+                return ThreatLevel.IRGC_OPERATIVE
+
+        # Check if known IRGC media account (from our list)
         if self.nlp.is_irgc_media_account(account.username):
             return ThreatLevel.STATE_PROPAGANDIST
-
-        # Combine all text for analysis
-        all_text = account.bio or ""
-        for t in tweets:
-            all_text += " " + (t.text or "")
 
         # Count threat signals across all tweets
         violence_count = 0
@@ -273,24 +277,20 @@ class StanceClassifier:
         bio_signals = self.nlp.get_threat_signals(account.bio or "")
         irgc_count += len(bio_signals["irgc_signals"])
 
-        # Priority classification (most dangerous first)
+        # Priority classification for non-seed accounts (most dangerous first)
 
-        # 1. Violence inciter - immediate flag for calls to violence
+        # 2. Violence inciter - immediate flag for calls to violence
         if violence_count >= 2:
             return ThreatLevel.VIOLENCE_INCITER
 
-        # 2. Doxxer - exposes opposition identities
+        # 3. Doxxer - exposes opposition identities
         if doxxing_count >= 2:
             return ThreatLevel.DOXXER
 
-        # 3. IRGC operative - direct IRGC connection
-        if irgc_count >= 3 or (irgc_count >= 1 and account.seed_category and "irgc" in account.seed_category.value):
+        # 4. IRGC operative - direct IRGC connection (non-seed only)
+        # Requires strong signal: many IRGC references or explicit IRGC affiliation in bio
+        if irgc_count >= 5:
             return ThreatLevel.IRGC_OPERATIVE
-
-        # 4. State propagandist - official state media
-        if account.is_seed and account.seed_category:
-            if account.seed_category.value in ["official_state", "state_media"]:
-                return ThreatLevel.STATE_PROPAGANDIST
 
         # 5. Check if likely a bot (amplifier bot)
         if account.bot_score and account.bot_score >= 0.7:
@@ -442,11 +442,20 @@ Respond ONLY with a JSON object:
         account_ids: Optional[list[int]] = None,
         use_llm: bool = True,
         batch_size: int = 100,
+        skip_inactive_days: int = 180,
     ) -> int:
         """Classify all accounts (or specified accounts).
 
+        Args:
+            account_ids: Specific accounts to classify (all if None)
+            use_llm: Whether to use LLM for ambiguous cases
+            batch_size: Number of updates per batch commit
+            skip_inactive_days: Skip accounts with no tweets in this many days (0=don't skip)
+
         Returns number of accounts classified.
         """
+        from datetime import datetime, timezone, timedelta
+
         if account_ids is None:
             accounts = self.db.get_all_accounts()
         else:
@@ -454,13 +463,26 @@ Respond ONLY with a JSON object:
             accounts = [a for a in accounts if a]
 
         classified = 0
+        skipped_inactive = 0
         batch_updates = []
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=skip_inactive_days) if skip_inactive_days > 0 else None
 
         for account in accounts:
             if not account.id:
                 continue
 
             tweets = self.db.get_tweets_by_account(account.id, limit=50)
+
+            # Skip inactive accounts (no recent tweets)
+            if cutoff_date and tweets:
+                most_recent = max((t.created_at for t in tweets if t.created_at), default=None)
+                if most_recent and most_recent < cutoff_date:
+                    skipped_inactive += 1
+                    continue
+            elif cutoff_date and not tweets:
+                # No tweets at all - skip
+                skipped_inactive += 1
+                continue
             stance, taxonomy, threat_level = self.classify_account(account, tweets, use_llm=use_llm)
 
             # Determine account type
@@ -484,12 +506,15 @@ Respond ONLY with a JSON object:
             # Commit batch when it reaches batch_size
             if len(batch_updates) >= batch_size:
                 self.db.update_accounts_classification_batch(batch_updates)
-                print(f"  Processed {classified} accounts...")
+                print(f"  Processed {classified} accounts (skipped {skipped_inactive} inactive)...")
                 batch_updates = []
 
         # Commit remaining updates
         if batch_updates:
             self.db.update_accounts_classification_batch(batch_updates)
+
+        if skipped_inactive > 0:
+            print(f"  Skipped {skipped_inactive} inactive accounts (no activity in {skip_inactive_days} days)")
 
         return classified
 
