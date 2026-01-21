@@ -1,5 +1,6 @@
 """Stance classification for SEDA."""
 
+import time
 from typing import Optional
 
 from seda.config import get_settings
@@ -13,6 +14,24 @@ from seda.models import (
     Tweet,
 )
 from seda.analysis.nlp import get_nlp
+
+
+def retry_on_connection_error(func, max_retries=3, base_delay=1.0):
+    """Retry a function on connection errors with exponential backoff."""
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            error_str = str(e).lower()
+            is_connection_error = any(x in error_str for x in [
+                "connection reset", "connection refused", "timed out",
+                "timeout", "http error", "network"
+            ])
+            if is_connection_error and attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                time.sleep(delay)
+                continue
+            raise
 
 # Try to import anthropic
 try:
@@ -443,6 +462,7 @@ Respond ONLY with a JSON object:
         use_llm: bool = True,
         batch_size: int = 100,
         skip_inactive_days: int = 180,
+        chunk_size: int = 500,
     ) -> int:
         """Classify all accounts (or specified accounts).
 
@@ -451,38 +471,44 @@ Respond ONLY with a JSON object:
             use_llm: Whether to use LLM for ambiguous cases
             batch_size: Number of updates per batch commit
             skip_inactive_days: Skip accounts with no tweets in this many days (0=don't skip)
+            chunk_size: Number of accounts to load from DB at a time
 
         Returns number of accounts classified.
         """
         from datetime import datetime, timezone, timedelta
-
-        if account_ids is None:
-            accounts = self.db.get_all_accounts()
-        else:
-            accounts = [self.db.get_account(aid) for aid in account_ids]
-            accounts = [a for a in accounts if a]
 
         classified = 0
         skipped_inactive = 0
         batch_updates = []
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=skip_inactive_days) if skip_inactive_days > 0 else None
 
-        for account in accounts:
-            if not account.id:
-                continue
+        def process_account(account: Account) -> bool:
+            """Process a single account. Returns True if classified, False if skipped."""
+            nonlocal classified, skipped_inactive, batch_updates
 
-            tweets = self.db.get_tweets_by_account(account.id, limit=50)
+            if not account.id:
+                return False
+
+            # Use retry logic for database calls
+            try:
+                tweets = retry_on_connection_error(
+                    lambda aid=account.id: self.db.get_tweets_by_account(aid, limit=50)
+                )
+            except Exception as e:
+                print(f"  Warning: Failed to get tweets for {account.username}: {e}")
+                tweets = []
 
             # Skip inactive accounts (no recent tweets)
             if cutoff_date and tweets:
                 most_recent = max((t.created_at for t in tweets if t.created_at), default=None)
                 if most_recent and most_recent < cutoff_date:
                     skipped_inactive += 1
-                    continue
+                    return False
             elif cutoff_date and not tweets:
                 # No tweets at all - skip
                 skipped_inactive += 1
-                continue
+                return False
+
             stance, taxonomy, threat_level = self.classify_account(account, tweets, use_llm=use_llm)
 
             # Determine account type
@@ -505,13 +531,80 @@ Respond ONLY with a JSON object:
 
             # Commit batch when it reaches batch_size
             if len(batch_updates) >= batch_size:
-                self.db.update_accounts_classification_batch(batch_updates)
+                try:
+                    retry_on_connection_error(
+                        lambda updates=list(batch_updates): self.db.update_accounts_classification_batch(updates)
+                    )
+                except Exception as e:
+                    print(f"  Warning: Failed to save batch: {e}")
                 print(f"  Processed {classified} accounts (skipped {skipped_inactive} inactive)...")
                 batch_updates = []
 
+            return True
+
+        # Process accounts - either specific IDs or all accounts in chunks
+        if account_ids is not None:
+            # Process specific accounts
+            for aid in account_ids:
+                try:
+                    account = retry_on_connection_error(lambda a=aid: self.db.get_account(a))
+                    if account:
+                        process_account(account)
+                except Exception as e:
+                    print(f"  Warning: Failed to load account {aid}: {e}")
+        else:
+            # Optimization: Only load accounts that have tweets (huge performance gain)
+            # First, get list of account IDs that have tweets
+            try:
+                with self.db.connection() as conn:
+                    account_ids_with_tweets = [
+                        row[0] for row in conn.execute(
+                            "SELECT DISTINCT account_id FROM tweets"
+                        ).fetchall()
+                    ]
+                print(f"  Found {len(account_ids_with_tweets)} accounts with tweets")
+            except Exception as e:
+                print(f"  Warning: Could not get accounts with tweets: {e}")
+                account_ids_with_tweets = None
+
+            if account_ids_with_tweets is not None:
+                # Process only accounts with tweets
+                for aid in account_ids_with_tweets:
+                    try:
+                        account = retry_on_connection_error(lambda a=aid: self.db.get_account(a))
+                        if account:
+                            process_account(account)
+                    except Exception as e:
+                        print(f"  Warning: Failed to load account {aid}: {e}")
+            else:
+                # Fallback to chunked loading for all accounts
+                offset = 0
+                while True:
+                    try:
+                        accounts = retry_on_connection_error(
+                            lambda o=offset: self.db.get_all_accounts(limit=chunk_size, offset=o)
+                        )
+                    except Exception as e:
+                        print(f"  Error loading accounts at offset {offset}: {e}")
+                        break
+
+                    if not accounts:
+                        break
+
+                    print(f"  Loaded {len(accounts)} accounts (offset {offset})...")
+                    for account in accounts:
+                        process_account(account)
+
+                    offset += chunk_size
+
         # Commit remaining updates
         if batch_updates:
-            self.db.update_accounts_classification_batch(batch_updates)
+            try:
+                retry_on_connection_error(
+                    lambda updates=list(batch_updates): self.db.update_accounts_classification_batch(updates)
+                )
+            except Exception as e:
+                print(f"  Warning: Failed to save final batch: {e}")
 
         if skipped_inactive > 0:
             print(f"  Skipped {skipped_inactive} inactive accounts (no activity in {skip_inactive_days} days)")
