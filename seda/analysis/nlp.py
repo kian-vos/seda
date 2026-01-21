@@ -243,17 +243,18 @@ class PersianNLP:
         "iikirgc",
     ]
 
-    # Doxxing indicators (Persian)
+    # Doxxing indicators (Persian) - more specific phrases to avoid false positives
     DOXXING_KEYWORDS_FA = [
         "شناسایی شد",      # Has been identified
-        "هویت",           # Identity
-        "آدرس",           # Address
+        "هویت واقعی",      # Real identity
+        "آدرس منزل",       # Home address
         "محل کار",        # Workplace
-        "خانواده",        # Family
         "افشا شد",        # Has been exposed
         "معرفی می‌کنیم",   # We introduce (expose)
-        "این فرد",        # This person
-        "مشخصات",         # Details/information
+        "مشخصات کامل",    # Full details
+        "خانواده‌اش",      # Their family (possessive - more likely doxxing context)
+        "نام واقعی",      # Real name
+        "شناسایی کنید",   # Identify them (call to action)
     ]
 
     # Doxxing indicators (English)
@@ -262,10 +263,11 @@ class PersianNLP:
         "real name is",
         "lives at",
         "works at",
-        "family members",
+        "their family",    # More specific than just "family members"
         "exposed",
         "doxxed",
         "personal information",
+        "home address",
     ]
 
     # Harassment/troll indicators (Persian)
