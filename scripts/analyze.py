@@ -313,8 +313,9 @@ def report():
 @app.command()
 def explain(
     username: str = typer.Argument(..., help="Username to explain"),
+    use_llm: bool = typer.Option(False, "--llm", help="Use LLM for detailed explanation"),
 ):
-    """Explain analysis scores for an account."""
+    """Explain analysis scores and threat classification for an account."""
     db = get_db()
 
     username = username.lstrip("@")
@@ -342,19 +343,50 @@ def explain(
     console.print(f"  Coordination score: {account.coordination_score:.3f}" if account.coordination_score else "  Coordination score: N/A")
     console.print(f"  Political stance: {account.political_stance.value}")
     console.print(f"  Political taxonomy: {account.political_taxonomy.value}")
+    console.print(f"  [bold]Threat level: {account.threat_level.value if account.threat_level else 'unknown'}[/bold]")
+
+    # Threat level explanation
+    console.print("\n[bold]Threat Classification Explanation[/bold]")
+    classifier = StanceClassifier()
+    explanation = classifier.explain_account(account)
+
+    console.print(f"  Activity status: {explanation['activity_status']}")
+    console.print(f"\n  [cyan]Signal counts:[/cyan]")
+    console.print(f"    Violence keywords: {explanation['signal_counts']['violence']}")
+    console.print(f"    IRGC references: {explanation['signal_counts']['irgc']}")
+    console.print(f"    Doxxing indicators: {explanation['signal_counts']['doxxing']}")
+    console.print(f"    Harassment keywords: {explanation['signal_counts']['harassment']}")
+
+    console.print(f"\n  [cyan]Rule-based explanation:[/cyan]")
+    console.print(f"    {explanation['rule_based_explanation']}")
+
+    # Show example tweets if available
+    for signal_type, examples in explanation['examples'].items():
+        if examples:
+            console.print(f"\n  [yellow]Example {signal_type} tweets:[/yellow]")
+            for ex in examples[:2]:
+                console.print(f"    [{ex['date']}] {ex['text'][:150]}...")
+                console.print(f"    Keywords: {', '.join(ex['keywords'])}")
+
+    # LLM explanation
+    if use_llm and 'llm_explanation' in explanation:
+        console.print(f"\n  [green]LLM Analysis:[/green]")
+        console.print(f"    {explanation['llm_explanation']}")
+    elif use_llm:
+        console.print("\n  [yellow]LLM explanation not available (check ANTHROPIC_API_KEY)[/yellow]")
 
     # Bot score explanation
     if account.bot_score is not None:
         console.print("\n[bold]Bot Score Explanation[/bold]")
         try:
             detector = BotDetector()
-            explanation = detector.explain_prediction(account)
+            bot_explanation = detector.explain_prediction(account)
 
-            console.print(f"  Prediction: {'BOT' if explanation['is_bot'] else 'HUMAN'}")
-            console.print(f"  Confidence: {explanation['bot_score']:.3f}")
+            console.print(f"  Prediction: {'BOT' if bot_explanation['is_bot'] else 'HUMAN'}")
+            console.print(f"  Confidence: {bot_explanation['bot_score']:.3f}")
 
             console.print("\n  Top contributing factors:")
-            for name, info in list(explanation.get("top_factors", {}).items())[:5]:
+            for name, info in list(bot_explanation.get("top_factors", {}).items())[:5]:
                 console.print(f"    {name}: {info['value']:.3f} (importance: {info['importance']:.3f})")
         except Exception as e:
             console.print(f"  [yellow]Could not explain: {e}[/yellow]")
@@ -365,7 +397,8 @@ def explain(
         console.print("\n[bold]Recent Tweets[/bold]")
         for tweet in tweets:
             text = tweet.text[:100] + "..." if len(tweet.text) > 100 else tweet.text
-            console.print(f"  - {text}")
+            date = tweet.created_at.strftime("%Y-%m-%d") if tweet.created_at else "Unknown"
+            console.print(f"  [{date}] {text}")
 
 
 @app.command("train-bot")

@@ -544,3 +544,159 @@ Respond ONLY with a JSON object:
     ) -> list[Account]:
         """Get accounts with a specific stance."""
         return self.db.get_all_accounts(stance=stance, limit=limit)
+
+    def explain_account(
+        self,
+        account: Account,
+        tweets: Optional[list[Tweet]] = None,
+    ) -> dict:
+        """Generate a detailed explanation of why an account was classified.
+
+        Uses LLM to provide human-readable explanation with examples.
+
+        Args:
+            account: Account to explain
+            tweets: Account's tweets (fetched if not provided)
+
+        Returns:
+            Dict with explanation, evidence, and example tweets
+        """
+        if tweets is None and account.id:
+            tweets = self.db.get_tweets_by_account(account.id, limit=50)
+
+        tweets = tweets or []
+
+        # Get threat signals
+        signal_counts = self._count_account_threat_signals(account, tweets)
+
+        # Find example tweets with signals
+        violence_examples = []
+        irgc_examples = []
+        doxxing_examples = []
+        harassment_examples = []
+
+        for t in tweets:
+            if not t.text:
+                continue
+            signals = self.nlp.get_threat_signals(t.text)
+            if signals["violence_keywords"] and len(violence_examples) < 3:
+                violence_examples.append({
+                    "text": t.text[:300],
+                    "keywords": signals["violence_keywords"],
+                    "date": t.created_at.strftime("%Y-%m-%d") if t.created_at else "Unknown"
+                })
+            if signals["irgc_signals"] and len(irgc_examples) < 3:
+                irgc_examples.append({
+                    "text": t.text[:300],
+                    "keywords": signals["irgc_signals"],
+                    "date": t.created_at.strftime("%Y-%m-%d") if t.created_at else "Unknown"
+                })
+            if signals["doxxing_indicators"] and len(doxxing_examples) < 3:
+                doxxing_examples.append({
+                    "text": t.text[:300],
+                    "keywords": signals["doxxing_indicators"],
+                    "date": t.created_at.strftime("%Y-%m-%d") if t.created_at else "Unknown"
+                })
+            if signals["harassment_keywords"] and len(harassment_examples) < 3:
+                harassment_examples.append({
+                    "text": t.text[:300],
+                    "keywords": signals["harassment_keywords"],
+                    "date": t.created_at.strftime("%Y-%m-%d") if t.created_at else "Unknown"
+                })
+
+        # Build rule-based explanation
+        explanation_parts = []
+        threat_level = account.threat_level.value if account.threat_level else "unknown"
+
+        if threat_level == "violence_inciter":
+            explanation_parts.append(f"This account has been flagged for inciting violence with {signal_counts['violence']} detected instances of violent language.")
+        elif threat_level == "doxxer":
+            explanation_parts.append(f"This account shows {signal_counts['doxxing']} indicators of doxxing behavior (exposing identities).")
+        elif threat_level == "irgc_operative":
+            explanation_parts.append(f"This account shows {signal_counts['irgc']} connections to IRGC/military narratives.")
+        elif threat_level == "state_propagandist":
+            explanation_parts.append("This account is associated with official state or state media based on seed categorization.")
+        elif threat_level == "amplifier_bot":
+            explanation_parts.append(f"This account has a high bot score ({account.bot_score:.2f}) indicating automated behavior.")
+        elif threat_level == "troll":
+            explanation_parts.append(f"This account shows {signal_counts['harassment']} instances of harassment language.")
+        elif threat_level == "passive_supporter":
+            explanation_parts.append("This account engages with pro-regime content but doesn't show violent or harassment patterns.")
+
+        # Calculate activity score
+        recent_tweets = [t for t in tweets if t.created_at]
+        if recent_tweets:
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            days_since_last = (now - max(t.created_at for t in recent_tweets)).days
+            activity_status = "Active" if days_since_last < 30 else f"Inactive ({days_since_last} days since last tweet)"
+        else:
+            activity_status = "Unknown activity"
+
+        result = {
+            "username": account.username,
+            "threat_level": threat_level,
+            "political_stance": account.political_stance.value if account.political_stance else "unknown",
+            "activity_status": activity_status,
+            "signal_counts": signal_counts,
+            "rule_based_explanation": " ".join(explanation_parts),
+            "examples": {
+                "violence": violence_examples,
+                "irgc": irgc_examples,
+                "doxxing": doxxing_examples,
+                "harassment": harassment_examples,
+            },
+        }
+
+        # Generate LLM explanation if available
+        if self.client and tweets:
+            llm_explanation = self._generate_llm_explanation(account, tweets, signal_counts, threat_level)
+            result["llm_explanation"] = llm_explanation
+
+        return result
+
+    def _generate_llm_explanation(
+        self,
+        account: Account,
+        tweets: list[Tweet],
+        signal_counts: dict,
+        threat_level: str,
+    ) -> str:
+        """Generate LLM-powered explanation for the classification."""
+        if not self.client:
+            return ""
+
+        # Prepare tweet samples
+        tweet_samples = []
+        for t in tweets[:10]:
+            if t.text:
+                tweet_samples.append(f"- [{t.created_at.strftime('%Y-%m-%d') if t.created_at else 'Unknown'}]: {t.text[:200]}")
+
+        prompt = f"""Analyze this Twitter/X account and explain why it has been classified as a "{threat_level}" in our Iranian regime propaganda detection system.
+
+Account: @{account.username}
+Display Name: {account.display_name or 'N/A'}
+Bio: {account.bio or 'N/A'}
+Followers: {account.followers_count:,}
+Classification: {threat_level}
+
+Detected signals:
+- Violence keywords: {signal_counts['violence']}
+- IRGC/military references: {signal_counts['irgc']}
+- Doxxing indicators: {signal_counts['doxxing']}
+- Harassment keywords: {signal_counts['harassment']}
+
+Sample tweets:
+{chr(10).join(tweet_samples)}
+
+Provide a 2-3 sentence explanation of why this account was classified this way, citing specific evidence from the bio or tweets. Be factual and objective. If the classification seems questionable based on the evidence, note that."""
+
+        try:
+            response = self.client.messages.create(
+                model="claude-3-haiku-20240307",
+                max_tokens=300,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.content[0].text
+        except Exception as e:
+            return f"Error generating explanation: {e}"
