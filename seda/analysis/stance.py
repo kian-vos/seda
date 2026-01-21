@@ -92,8 +92,8 @@ class StanceClassifier:
         account_with_stance = Account(**account.model_dump())
         account_with_stance.political_stance = stance
 
-        # Classify threat level for pro-regime accounts
-        threat_level = self.classify_threat_level(account_with_stance, tweets or [])
+        # Classify threat level for pro-regime accounts (hybrid: keywords + LLM for ambiguous)
+        threat_level = self.classify_threat_level(account_with_stance, tweets or [], use_llm=use_llm)
 
         return stance, taxonomy, threat_level
 
@@ -250,12 +250,16 @@ class StanceClassifier:
         self,
         account: Account,
         tweets: list[Tweet],
+        use_llm: bool = False,
     ) -> ThreatLevel:
         """Classify threat level for pro-regime accounts.
+
+        Uses hybrid approach: keywords first, LLM for ambiguous cases.
 
         Args:
             account: Account to classify
             tweets: Account's tweets
+            use_llm: Whether to use LLM for ambiguous cases
 
         Returns:
             ThreatLevel classification
@@ -296,6 +300,13 @@ class StanceClassifier:
         bio_signals = self.nlp.get_threat_signals(account.bio or "")
         irgc_count += len(bio_signals["irgc_signals"])
 
+        signal_counts = {
+            "violence": violence_count,
+            "irgc": irgc_count,
+            "doxxing": doxxing_count,
+            "harassment": harassment_count,
+        }
+
         # Priority classification for non-seed accounts (most dangerous first)
 
         # 2. Violence inciter - immediate flag for calls to violence
@@ -319,9 +330,108 @@ class StanceClassifier:
         if harassment_count >= 3:
             return ThreatLevel.TROLL
 
+        # HYBRID: Use LLM for ambiguous cases
+        # Ambiguous = has some signals but not enough to trigger, or has tweets to analyze
+        has_some_signals = (violence_count >= 1 or irgc_count >= 2 or
+                           doxxing_count >= 1 or harassment_count >= 1)
+
+        if use_llm and self.client and tweets and has_some_signals:
+            llm_threat = self._llm_classify_threat(account, tweets, signal_counts)
+            if llm_threat != ThreatLevel.UNKNOWN:
+                return llm_threat
+
         # 7. Passive supporter - engages but doesn't incite
         if violence_count == 0 and harassment_count < 2:
             return ThreatLevel.PASSIVE_SUPPORTER
+
+        return ThreatLevel.UNKNOWN
+
+    def _llm_classify_threat(
+        self,
+        account: Account,
+        tweets: list[Tweet],
+        signal_counts: dict,
+    ) -> ThreatLevel:
+        """Use LLM to classify threat level for ambiguous cases.
+
+        Args:
+            account: Account to classify
+            tweets: Account's tweets
+            signal_counts: Dict of keyword signal counts
+
+        Returns:
+            ThreatLevel from LLM or UNKNOWN if failed
+        """
+        if not self.client:
+            return ThreatLevel.UNKNOWN
+
+        # Prepare tweet samples
+        tweet_samples = []
+        for t in tweets[:15]:
+            if t.text:
+                tweet_samples.append(f"- {t.text[:250]}")
+
+        prompt = f"""Analyze this Iranian Twitter account and classify its threat level.
+
+Account: @{account.username}
+Display Name: {account.display_name or 'N/A'}
+Bio: {account.bio or 'N/A'}
+Followers: {account.followers_count:,}
+
+Keyword signals detected:
+- Violence keywords: {signal_counts['violence']}
+- IRGC/military references: {signal_counts['irgc']}
+- Doxxing indicators: {signal_counts['doxxing']}
+- Harassment keywords: {signal_counts['harassment']}
+
+Sample tweets:
+{chr(10).join(tweet_samples)}
+
+Threat levels (choose ONE):
+- violence_inciter: Explicitly calls for violence, death, execution of protesters/opposition
+- doxxer: Exposes real identities, addresses, workplaces of opposition figures
+- irgc_operative: Shows direct IRGC/Basij military affiliation (not just mentions)
+- state_propagandist: Official government messaging, state media narrative
+- troll: Systematic harassment, insults, coordinated attacks on individuals
+- passive_supporter: Supports regime but no incitement or harassment
+
+Consider context and intent. Persian sarcasm mocking protesters is pro-regime.
+Reporting on IRGC news is NOT being an operative.
+
+Return ONLY JSON: {{"threat_level": "...", "confidence": 0.0-1.0, "reasoning": "brief"}}"""
+
+        try:
+            response = self.client.messages.create(
+                model="claude-3-haiku-20240307",  # Fast and cheap
+                max_tokens=200,
+                messages=[{"role": "user", "content": prompt}]
+            )
+
+            import json
+            import re
+
+            content = response.content[0].text
+            json_match = re.search(r"\{[^}]+\}", content)
+            if json_match:
+                result = json.loads(json_match.group())
+                threat_str = result.get("threat_level", "").lower()
+                confidence = result.get("confidence", 0)
+
+                # Only accept high-confidence results
+                if confidence >= 0.6:
+                    threat_map = {
+                        "violence_inciter": ThreatLevel.VIOLENCE_INCITER,
+                        "doxxer": ThreatLevel.DOXXER,
+                        "irgc_operative": ThreatLevel.IRGC_OPERATIVE,
+                        "state_propagandist": ThreatLevel.STATE_PROPAGANDIST,
+                        "amplifier_bot": ThreatLevel.AMPLIFIER_BOT,
+                        "troll": ThreatLevel.TROLL,
+                        "passive_supporter": ThreatLevel.PASSIVE_SUPPORTER,
+                    }
+                    return threat_map.get(threat_str, ThreatLevel.UNKNOWN)
+
+        except Exception:
+            pass
 
         return ThreatLevel.UNKNOWN
 
