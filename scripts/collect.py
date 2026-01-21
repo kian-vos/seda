@@ -286,6 +286,8 @@ def search(
     save: bool = typer.Option(True, "--save/--no-save", help="Save found accounts to database"),
 ):
     """Search for tweets by query and optionally save accounts."""
+    import time
+
     db = get_db()
     scraper = _get_scraper()
 
@@ -298,17 +300,35 @@ def search(
         return
 
     new_accounts = 0
+    failed_accounts = 0
     if save and accounts:
         console.print(f"[blue]Saving {len(accounts)} accounts...[/blue]")
-        for account in accounts:
-            existing = db.get_account_by_twitter_id(account.twitter_id)
-            if not existing:
-                db.insert_account(account)
-                new_accounts += 1
+        for i, account in enumerate(accounts):
+            # Retry logic for each account
+            for attempt in range(3):
+                try:
+                    existing = db.get_account_by_twitter_id(account.twitter_id)
+                    if not existing:
+                        db.insert_account(account)
+                        new_accounts += 1
+                    break  # Success
+                except Exception as e:
+                    if attempt < 2:
+                        console.print(f"[yellow]Retry {attempt + 1}/3 for @{account.username}: {e}[/yellow]")
+                        time.sleep(2 ** attempt)
+                    else:
+                        console.print(f"[red]Failed to save @{account.username}: {e}[/red]")
+                        failed_accounts += 1
+
+            # Progress indicator
+            if (i + 1) % 50 == 0:
+                console.print(f"  Processed {i + 1}/{len(accounts)} accounts...")
 
     console.print(f"[green]Found {len(tweets)} tweets from {len(accounts)} unique accounts[/green]")
     if save:
         console.print(f"[green]Added {new_accounts} new accounts to database[/green]")
+        if failed_accounts > 0:
+            console.print(f"[yellow]Failed to save {failed_accounts} accounts[/yellow]")
 
 
 @app.command()
