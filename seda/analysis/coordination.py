@@ -68,7 +68,7 @@ class CoordinationDetector:
     def detect_synchronized_posting(
         self,
         time_window_minutes: Optional[int] = None,
-        min_cluster_size: int = 3,
+        min_cluster_size: int = 20,  # Require 20+ accounts for real coordination
     ) -> list[CoordinationCluster]:
         """Detect synchronized posting using MinHash LSH.
 
@@ -184,11 +184,12 @@ class CoordinationDetector:
     def detect_hashtag_campaigns(
         self,
         z_score_threshold: float = 3.0,
-        min_accounts: int = 5,
+        min_accounts: int = 50,  # Require 50+ UNIQUE accounts for real coordination
     ) -> list[CoordinationCluster]:
         """Detect coordinated hashtag campaigns.
 
-        Finds hashtags with sudden spikes driven by small account sets.
+        Finds hashtags with sudden spikes driven by many coordinated accounts.
+        Real coordination = many different accounts posting same hashtag simultaneously.
         """
         # Get all tweets with hashtags
         tweets = self.db.get_all_tweets()
@@ -232,14 +233,18 @@ class CoordinationDetector:
                 z_score = (count - mean_count) / std_count
 
                 if z_score >= z_score_threshold:
-                    # Check if spike is driven by small account set
+                    # Check if spike is driven by MANY coordinated accounts
                     account_ids = list(set(t.account_id for t in bucket_tweets))
+                    unique_account_count = len(account_ids)
 
-                    if len(account_ids) <= min_accounts * 2 and count >= min_accounts:
-                        # Small number of accounts driving a spike = coordinated
-                        avg_tweets_per_account = count / len(account_ids)
+                    # Real coordination = many different accounts, not one account spamming
+                    # Require: 50+ unique accounts AND most accounts only tweeted 1-2 times
+                    # (organic spam is 1 account posting 100 times, coordination is 100 accounts posting 1-2 times each)
+                    if unique_account_count >= min_accounts:
+                        avg_tweets_per_account = count / unique_account_count
 
-                        if avg_tweets_per_account >= 2:  # Each account tweeting multiple times
+                        # Coordination signature: many accounts, low tweets per account
+                        if avg_tweets_per_account <= 3:  # Each account tweeting 1-3 times max
                             cluster = CoordinationCluster(
                                 cluster_type=CoordinationType.HASHTAG_CAMPAIGN,
                                 member_account_ids=account_ids,
@@ -247,11 +252,12 @@ class CoordinationDetector:
                                     "hashtag": hashtag,
                                     "time_bucket": bucket,
                                     "tweet_count": count,
+                                    "unique_accounts": unique_account_count,
                                     "z_score": float(z_score),
                                     "avg_tweets_per_account": float(avg_tweets_per_account),
                                 },
-                                confidence_score=min(1.0, z_score / 5),
-                                description=f"Hashtag campaign: #{hashtag} spiked with {count} tweets from {len(account_ids)} accounts",
+                                confidence_score=min(1.0, unique_account_count / 100),  # Scale by account count
+                                description=f"Hashtag campaign: #{hashtag} - {unique_account_count} accounts posted {count} tweets in 1 hour (z={z_score:.1f})",
                             )
                             cluster_id = self.db.insert_cluster(cluster)
                             cluster.id = cluster_id
@@ -261,12 +267,12 @@ class CoordinationDetector:
 
     def detect_amplification_networks(
         self,
-        min_retweets_to_seeds: int = 3,
-        min_community_size: int = 3,
+        min_retweets_to_seeds: int = 5,
+        min_community_size: int = 20,  # Require 20+ accounts for real coordination
     ) -> list[CoordinationCluster]:
         """Detect amplification networks using retweet graph analysis.
 
-        Finds accounts that disproportionately retweet seed accounts.
+        Finds clusters of accounts that coordinate to amplify seed accounts.
         """
         if not NETWORKX_AVAILABLE:
             return []

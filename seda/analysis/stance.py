@@ -330,16 +330,14 @@ class StanceClassifier:
         if harassment_count >= 3:
             return ThreatLevel.TROLL
 
-        # HYBRID: Use LLM for ambiguous cases
-        # Ambiguous = has some signals but not enough to trigger, or has tweets to analyze
-        has_some_signals = (violence_count >= 1 or irgc_count >= 2 or
-                           doxxing_count >= 1 or harassment_count >= 1)
-
-        if use_llm and self.client and tweets and has_some_signals:
+        # HYBRID: Use LLM for all accounts with tweets (not just ambiguous)
+        # LLM can detect context, sarcasm, and coded language that keywords miss
+        if use_llm and self.client and tweets:
             llm_threat = self._llm_classify_threat(account, tweets, signal_counts)
             if llm_threat != ThreatLevel.UNKNOWN:
                 return llm_threat
 
+        # Fallback to keyword-based classification
         # 7. Passive supporter - engages but doesn't incite
         if violence_count == 0 and harassment_count < 2:
             return ThreatLevel.PASSIVE_SUPPORTER

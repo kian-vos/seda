@@ -136,34 +136,33 @@ class PersianNLP:
     ]
 
     # Violence inciter keywords (Persian)
+    # NOTE: Using longer phrases to avoid false positives (e.g. "موش" matching "موشک")
     VIOLENCE_KEYWORDS_FA = [
         # Direct violence calls
         "اعدام کنید",        # Execute them
-        "بکشید",            # Kill them
-        "به درک",           # Send to hell
+        "اعدامشان کنید",     # Execute them (variant)
+        "بکشیدشان",         # Kill them (specific)
+        "به درک واصل",      # Send to hell (full phrase)
         "نابود کنید",       # Destroy them
-        "تیرباران",         # Firing squad
+        "تیرباران کنید",    # Execute by firing squad
         "دار بزنید",        # Hang them
-        "اعدامشان",         # Execute them (variant)
-        "بزنید",            # Beat them
-        # Dehumanization
-        "اوباش",            # Thugs
-        "اراذل",            # Riffraff
-        "حشرات",           # Insects
-        "سگ",              # Dogs (pejorative)
-        "موش",             # Rats
-        "نجس",             # Impure/unclean
+        "باید اعدام",       # Must be executed
+        # Dehumanization (using plural/specific forms to avoid substring matches)
+        "اوباش و اراذل",    # Thugs and riffraff
+        "حشرات موذی",       # Vermin insects
+        "مثل سگ",           # Like a dog
+        "موش‌ها",           # Rats (plural, won't match موشک)
+        "نجس‌ها",           # Impure ones
         # Incitement language
         "سرکوب کنید",       # Suppress them
-        "جمع کنید",        # Round them up
-        "پاکسازی",         # Cleanse/purge
-        "ریشه کن",         # Eradicate
+        "جمعشان کنید",      # Round them up (specific)
+        "پاکسازی کنید",     # Cleanse/purge (verb form)
+        "ریشه کن کنید",     # Eradicate (verb form)
         # Targeting protesters
         "آشوبگر باید",      # Rioters must...
-        "اغتشاشگر مرگ",     # Death to rioters
-        "فتنه گر",         # Seditionist
-        "مزدور باید",       # Mercenaries must...
-        "ضد انقلاب",        # Counter-revolutionary
+        "مرگ بر اغتشاشگر",  # Death to rioters
+        "فتنه‌گران",        # Seditionists (plural)
+        "مزدوران باید",     # Mercenaries must... (plural)
     ]
 
     # Violence inciter keywords (English)
